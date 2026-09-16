@@ -30,3 +30,9 @@ medusa-corpus/
 crytic-export/
 slither_results.json
 .medusa-artifact-hash
+
+# Local dev chain state and its address record. Both describe one disposable
+# chain started by scripts/dev-chain.ps1; committing them would be actively
+# misleading in a fresh clone, where those addresses do not exist.
+deployments/anvil-state.json
+deployments/local.json
