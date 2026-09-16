@@ -621,6 +621,52 @@ async function main() {
     const emptied = await browser.evaluate(`document.getElementById('message').textContent.slice(0, 60)`);
     has('depositing the exact balance works', emptied, 'confirmed');
 
+    // ==================================================================
+    // The REDEEM Max button. Reported as broken, and it was: it filled the input
+    // with the raw share count in base units -- 2.7e20 -- where every other amount
+    // on the page is a decimal number. The deposit equivalent used formatUnits and
+    // was right; this one did not, and the two were written separately.
+    // ==================================================================
+    console.log('');
+    console.log('--- the REDEEM Max button ---');
+
+    await browser.click('redeem-max-button');
+    await new Promise((r) => setTimeout(r, 300));
+
+    const redeemFill = await browser.evaluate(`(() => {
+      const shown = document.getElementById('redeem-amount').value;
+      const sharesText = document.getElementById('share-balance').textContent;
+      return { shown, sharesText, disabled: document.getElementById('redeem-button').disabled };
+    })()`);
+
+    check('the redeem Max button fills a decimal number, not raw base units', /^\d+(\.\d+)?$/.test(redeemFill.shown), `value="${redeemFill.shown}"`);
+    eq('...and it matches the share balance shown on the page', redeemFill.shown, redeemFill.sharesText);
+    // The real distinction is not length: 18-decimal shares are long either way
+    // (5409.090899330578546053 is 23 characters, and so is the wrong answer). It is
+    // that the filled value must be the SAME NUMBER as the balance on screen. A raw
+    // base-unit count is 1e18 times larger while looking superficially similar,
+    // which is what made this survive a reading -- and cost a reverted redemption.
+    const filledValue = Number(redeemFill.shown);
+    const balanceShown = Number(redeemFill.sharesText);
+    check(
+      '...and the filled value is the same magnitude as the balance, not 1e18 larger',
+      Math.abs(filledValue - balanceShown) < 1e-6 * Math.max(1, balanceShown),
+      `filled=${filledValue} balance=${balanceShown}`,
+    );
+    check('the Redeem button is enabled afterwards', redeemFill.disabled === false, `disabled=${redeemFill.disabled}`);
+
+    // The real proof: redeeming everything must succeed.
+    await browser.click('redeem-button');
+    await browser.waitFor(`document.getElementById('message').textContent.includes('confirmed') || document.getElementById('message').textContent.includes('refused')`, { timeoutMs: 25000 });
+    await new Promise((r) => setTimeout(r, 1500));
+    const redeemed = await browser.evaluate(`({
+      message: document.getElementById('message').textContent.slice(0, 60),
+      shares: document.getElementById('share-balance').textContent,
+      totalAssets: document.getElementById('total-assets').textContent,
+    })`);
+    has('redeeming everything succeeds', redeemed.message, 'confirmed');
+    eq('...and the shares are gone', redeemed.shares, '0');
+
     // ====================================================== what the console said
     console.log('');
     console.log('--- page diagnostics ---');

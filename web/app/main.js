@@ -396,11 +396,32 @@ async function doRedeem() {
   }
 }
 
+/**
+ * Fill the Redeem box with the whole share balance, as a DECIMAL number.
+ *
+ * TWO BUGS HERE, and the second was worse than the first.
+ *
+ * 1. `String(state.shares)` is the raw base-unit count -- 5409090899330578546053
+ *    for 5409.090899330578546053 shares. Every other amount on the page is a
+ *    decimal, so the box showed a 22-digit integer that no one could read, and
+ *    `parseAmount` would happily convert it back, which is why the mistake was not
+ *    obvious from the error alone. `formatUnits` is the fix, and the Deposit Max
+ *    button already did this correctly -- the two were written separately, which is
+ *    exactly how one of them came out wrong.
+ *
+ * 2. THE REASON IT MATTERED: the raw count is the same DIGITS as the correct decimal
+ *    value, so `parseAmount` accepted it and the page sent a redeem for 5.4e21
+ *    shares against a balance of 5.4e21 base units -- a number 1e18 times too large.
+ *    The transaction was mined and reverted, costing gas. A cosmetic-looking bug was
+ *    a paid revert, and only a browser could show the difference.
+ */
 function fillMaxRedeem() {
-  // `shares`, not `maxWithdraw`: the redeem input takes shares, and those are
-  // different units. Using maxWithdraw here would look plausible and be wrong by
-  // the share price on every vault that has earned anything.
-  el('redeem-amount').value = String(app.lastState?.shares ?? 0n);
+  // `shares`, not `maxWithdraw`: the redeem input takes SHARES, and maxWithdraw is
+  // in asset units. Using it here would look plausible and be wrong by the share
+  // price on any vault that has earned something.
+  const shares = app.lastState?.shares ?? 0n;
+  const decimals = app.lastState?.shareDecimals ?? 18;
+  el('redeem-amount').value = formatUnits(shares, decimals);
   syncControls();
 }
 
