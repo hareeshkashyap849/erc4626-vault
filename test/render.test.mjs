@@ -291,6 +291,26 @@ test('renderState writes every figure, formatted with the right decimals', async
 });
 
 /**
+ * @dev The Asset field showed an em dash in a real browser while `readState` was
+ * holding the real symbol the whole time.
+ *
+ * `symbol` was an OPTION-only parameter and main.js passes no options, so the
+ * chain's value was silently dropped. Every existing test supplied the option
+ * itself -- which is exactly why none of them caught it: they were testing the
+ * parameter rather than the page's use of it. A screenshot found it.
+ */
+test('renderState uses the symbol from the read state when no option is given', async () => {
+  const { dom, render } = await loadRender();
+
+  // No options at all, which is what main.js does.
+  render.renderState(STATE);
+
+  assert.equal(dom.elements.get('asset-symbol').visibleText, 'mUSDC', 'the chain symbol must not be dropped');
+  assert.equal(dom.elements.get('total-assets').visibleText, '100 mUSDC');
+  assert.equal(dom.elements.get('wallet-balance').visibleText, '87.5 mUSDC');
+});
+
+/**
  * @dev The decimals bug, at the rendering layer.
  *
  * Shares are 18-decimal and the asset is 6-decimal, so formatting a share balance

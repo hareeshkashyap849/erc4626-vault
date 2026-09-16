@@ -159,8 +159,60 @@ Both are now covered by regression tests. Neither was found by reading the code,
 and the second was not found by any unit test — it needed the write path exercised
 with a failing transaction.
 
-**Not tested:** real wallet interactions, and the page in a real browser. That
-needs a person clicking approve, and it is the manual checklist in §7.
+**Not tested:** MetaMask itself. The page runs in a real browser under automation
+(§6, "A real browser, driven from Node"), but the wallet is a fake that forwards to
+the chain — so anything specific to MetaMask's own UI is still §7's job.
+
+### A real browser, driven from Node
+
+`web/tools/browser-test.mjs` runs the page in **actual Chrome** — real CSS, real
+event dispatch, real `HTMLCollection` semantics — driven over the DevTools Protocol.
+No dependency is installed: Chrome is already on the machine, CDP is a WebSocket
+carrying JSON, and node 24 has a global `WebSocket`. `web/tools/lib/cdp.mjs` is the
+entire client.
+
+Only `window.ethereum` is faked, because a real MetaMask needs a human to press
+Approve. The fake is a genuine EIP-1193 provider that **forwards to anvil**: reads
+go to the real chain unmodified, and writes are signed by anvil's unlocked account
+and really execute. The page, the DOM, the CSS, the module loader, the dev server
+and the chain are all real, and the vault's state really changes.
+
+What it verifies that nothing else could:
+
+| Check | Why only a browser can see it |
+|---|---|
+| the wrong-chain guard is not *visible* | asserts the **computed style**, not `element.hidden`. Those two disagreed, and did so in production |
+| the Asset field shows the symbol | the value comes from `main.js`'s call, not from `renderState`'s own contract |
+| the deposit is approve-then-deposit, in order | counted from the wallet's request log, in a real event loop |
+| a rejected deposit is neutral, not an error | asserts the rendered **class**, not the classification table |
+| failure class 3: the retry costs ONE transaction | the standing allowance is read back afterwards as arithmetic proof |
+| no uncaught exceptions or console errors | collected via `Runtime.exceptionThrown` |
+
+It deposits for real, then reverts an `evm_snapshot` — and **checks that the revert
+held**, because an earlier version printed "reverted" while anvil's periodic state
+dump quietly overwrote it. A cleanup that is reported but did not happen is worse
+than no cleanup at all.
+
+**Sandbox requirement:** Chromium will not start unless it can create mojo IPC
+named pipes. Under a confined sandbox it dies with
+`FATAL platform_channel.cc: Check failed: 拒绝访问 (0x5)`, and **no Chrome flag
+avoids it** — the denial is the OS sandbox, not Chrome's own. So this file is
+deliberately *not* part of `scripts/run-all.mjs`, which must pass in a confined
+shell.
+
+### Two bugs that only a screenshot found
+
+1. **The wrong-chain banner was visible from page load.** The HTML carries `hidden`
+   and `renderChain` sets it correctly — but the UA stylesheet implements `hidden`
+   as `display: none`, and `.guard { display: flex }` outranks it. Every test
+   asserting `element.hidden === true` passed while the banner sat on screen. Fixed
+   with a global `[hidden] { display: none !important }`; the browser test now
+   asserts `getComputedStyle(...).display`.
+2. **The Asset field showed an em dash.** `renderState` took `symbol` as an
+   *option* and `main.js` passed no options, so the value `readState` had already
+   read from the chain was dropped on the floor. Every unit test supplied the option
+   itself and therefore never touched the page's real call. `renderState` now falls
+   back to `state.symbol`.
 
 ### A test double that is too permissive is worse than no test
 

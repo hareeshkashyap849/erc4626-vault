@@ -36,3 +36,9 @@ slither_results.json
 # misleading in a fresh clone, where those addresses do not exist.
 deployments/anvil-state.json
 deployments/local.json
+
+# Screenshots from web/tools/browser-test.mjs. Output, not source: they show one
+# particular chain state, so a committed copy would be stale the moment anyone
+# deposits. Regenerate with:
+#   node web/tools/browser-test.mjs --keep-screenshots
+web/tools/screenshots/

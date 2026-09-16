@@ -30,6 +30,26 @@
   box-sizing: border-box;
 }
 
+/*
+ * The `hidden` attribute MUST beat any display rule.
+ *
+ * The UA stylesheet implements `hidden` as `display: none`, and every explicit
+ * `display` declaration outranks it. `.guard` below sets `display: flex`, so the
+ * wrong-chain banner was painted from the moment the page loaded -- no amount of
+ * `element.hidden = true` could hide it.
+ *
+ * It survived three rounds of "fixing the guard": a DOM assertion on
+ * `element.hidden === true` passes whether or not anyone can SEE the element, and
+ * only a real browser with computed styles catches the difference. That is the
+ * whole argument for web/tools/browser-test.mjs existing.
+ *
+ * Written as a universal rule rather than on `.guard`, because the trap is not
+ * specific to one component: any element that sets its own display has it.
+ */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);

@@ -37,18 +37,25 @@ export function shortenAddress(address) {
  * the numbers it is drawing are current, and shows a marker if they are not.
  * The alternative -- quietly drawing the last known values as if they were live
  * -- is how a dApp ends up showing a balance that no longer exists.
+ *
+ * `symbol` and `decimals` default to what the READ STATE already carries, which is
+ * read from the chain. They were originally option-only, and `main.js` passed
+ * neither -- so the Asset field rendered an em dash while `readState` was holding
+ * the real symbol the whole time. A screenshot caught it; no test did, because
+ * every test supplied the option itself.
  */
-export function renderState(state, { symbol, decimals, stale = false } = {}) {
+export function renderState(state, { symbol = undefined, decimals = undefined, stale = false } = {}) {
   const assetDecimals = state.assetDecimals ?? decimals ?? 6;
   const shareDecimals = state.shareDecimals ?? 18;
+  const assetSymbol = symbol ?? state.symbol ?? '';
 
-  setText('asset-symbol', symbol ?? '—');
-  setText('wallet-balance', `${formatUnits(state.walletBalance ?? 0n, assetDecimals)} ${symbol ?? ''}`.trim());
+  setText('asset-symbol', assetSymbol || '—');
+  setText('wallet-balance', `${formatUnits(state.walletBalance ?? 0n, assetDecimals)} ${assetSymbol}`.trim());
   setText('allowance', formatUnits(state.allowance ?? 0n, assetDecimals));
   setText('share-balance', formatUnits(state.shares ?? 0n, shareDecimals));
   setText('share-value', formatUnits(state.shareValue ?? 0n, assetDecimals));
   setText('max-withdraw', formatUnits(state.maxWithdraw ?? 0n, assetDecimals));
-  setText('total-assets', `${formatUnits(state.totalAssets ?? 0n, assetDecimals)} ${symbol ?? ''}`.trim());
+  setText('total-assets', `${formatUnits(state.totalAssets ?? 0n, assetDecimals)} ${assetSymbol}`.trim());
   setText('total-supply', formatUnits(state.totalSupply ?? 0n, shareDecimals));
 
   // An empty vault has no share price. Showing "1.0" would be a lie told for
