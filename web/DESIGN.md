@@ -162,6 +162,46 @@ with a failing transaction.
 **Not tested:** real wallet interactions, and the page in a real browser. That
 needs a person clicking approve, and it is the manual checklist in §7.
 
+### A test double that is too permissive is worse than no test
+
+The most expensive bug in this file's history was three characters long, and every
+test was green:
+
+```js
+node.children.length = 0;   // TypeError: Cannot set property length of
+                            // #<HTMLCollection> which has only a getter
+```
+
+`children` is read-only in a browser. That line sat in `clearMessage`, which runs
+on **every** message path, so nothing could report anything — the entire
+notification system was dead. It was found by a person opening the page, not by
+28 passing tests.
+
+The tests were green because the DOM stub exposed `children` as a **plain array**,
+and arrays accept `.length = 0`. The stub was more permissive than the DOM, so it
+did not simulate the failure — it hid it.
+
+Three lessons, all paid for:
+
+1. **A stub must not be more capable than the thing it replaces.** When in doubt,
+   be stricter. The temptation is always to make the double convenient.
+2. **Reproducing a read-only collection faithfully is genuinely hard**, and the
+   attempt is a rabbit hole: a getter-only property fails *silently* in sloppy
+   mode (which is how bundled dependency code runs), and `Object.freeze` does not
+   stop a sloppy-mode write either. Chasing fidelity here cost more than it was
+   worth.
+3. **So the forbidden line is caught statically instead.** A check that greps the
+   app's source for `.children =` and `.children.length =` cannot be fooled by
+   stub behaviour at all. It is worth being explicit that this is a *weaker* kind
+   of test than executing the code — but for an API constraint, it is the reliable
+   one, and it fails the moment someone writes the line again.
+
+Teeth were verified rather than assumed: reintroducing the line makes the check
+fail and name the file and line number. The behavioural test that accompanies it —
+clear and re-render every shape of message without throwing — cannot catch the bug
+on its own, because the fixed source no longer contains it, and that is exactly why
+both kinds of check exist.
+
 ## 7. Manual checklist, for the human with the wallet
 
 **Status: NOT YET RUN.** Everything below is written but unverified against a real

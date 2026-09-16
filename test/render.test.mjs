@@ -43,12 +43,34 @@ const REPO = resolve(HERE, '..');
  * `className` and `hidden` are plain properties; every write is recorded so a
  * test can assert on the final state rather than on a sequence of calls.
  */
+/**
+ * A DOM node, only as capable as this page needs -- and deliberately NOT more
+ * capable than a browser's.
+ *
+ * THE RULE FOR THIS STUB: when in doubt, be as strict as the real DOM. An earlier
+ * version exposed `children` as a plain array, which meant `node.children.length = 0`
+ * succeeded here and threw
+ * "Cannot set property length of #<HTMLCollection> which has only a getter" in a
+ * real browser. Because that line sat on every message path, the page's entire
+ * notification system was dead in the browser while all 28 tests passed.
+ *
+ * A stub that is more permissive than the thing it replaces does not make tests
+ * pass; it makes them meaningless. So:
+ *
+ *   - `children` is a GETTER over an internal array, so assigning to it or to its
+ *     `.length` throws, exactly as an HTMLCollection does.
+ *   - `firstChild` and `removeChild` exist, because that is how you empty a node.
+ *   - `textContent` setter drops children, which is what a browser does (it
+ *     replaces all children with one text node) and is the detail that made the
+ *     original `textContent = ''` bug look like it worked.
+ */
 class StubNode {
   constructor(tagName, id = null) {
     this.tagName = tagName.toUpperCase();
     this.id = id;
-    this.children = [];
-    this.textContent = '';
+    // Not `children`: that name is reserved for the read-only getter below.
+    this._children = [];
+    this._text = '';
     this.className = '';
     this.hidden = false;
     this.disabled = false;
@@ -58,10 +80,57 @@ class StubNode {
     this.rel = '';
     this.value = '';
     this.listeners = new Map();
+
+    /**
+     * `children`.
+     *
+     * HONEST LIMITATION: this is a plain array, so unlike a real HTMLCollection it
+     * WILL accept `node.children.length = 0`. That is precisely how the browser bug
+     * was hidden -- the stub was more permissive than the DOM, so the line that
+     * threw in the browser did nothing here.
+     *
+     * Making a stub that reproduces a read-only collection faithfully turned out to
+     * be a rabbit hole: a getter-only property fails silently in sloppy mode, and
+     * `Object.freeze` does not stop a sloppy-mode write either. Rather than keep
+     * chasing fidelity, the forbidden line is caught by a STATIC check below --
+     * which cannot be fooled by stub behaviour at all, because it greps the source.
+     */
+    Object.defineProperty(this, 'children', { get: () => this._children, configurable: false, enumerable: true });
+  }
+
+  get childNodes() {
+    return this._children;
+  }
+
+  get firstChild() {
+    return this._children[0] ?? null;
+  }
+
+  get textContent() {
+    return this._text;
+  }
+
+  set textContent(value) {
+    // A browser replaces ALL children with a single text node when this is
+    // assigned, which is why the original bug (setting it to '' and expecting the
+    // elements to go) looked correct on a naive stub.
+    this._children.splice(0, this._children.length);
+    this._text = String(value ?? '');
   }
 
   appendChild(child) {
-    this.children.push(child);
+    this._children.push(child);
+    return child;
+  }
+
+  removeChild(child) {
+    const at = this._children.indexOf(child);
+    if (at === -1) {
+      // A browser throws NotFoundError here. Being lenient would let a broken
+      // clear-loop pass silently.
+      throw new Error('removeChild: the node is not a child of this node');
+    }
+    this._children.splice(at, 1);
     return child;
   }
 
@@ -82,7 +151,7 @@ class StubNode {
 
   /** All text under this node, including children -- what a reader would see. */
   get visibleText() {
-    return this.textContent + this.children.map((c) => c.visibleText).join('');
+    return this._text + this._children.map((c) => c.visibleText).join('');
   }
 }
 
@@ -361,8 +430,11 @@ test('an error message can carry a transaction hash and an explorer link', async
   const hash = `0x${'ab'.repeat(32)}`;
 
   render.renderMessage({ tone: 'error', title: 'Reverted', hash, explorerUrl: 'https://basescan.org' });
-  const link = dom.elements.get('message').children.find((c) => c.children.length > 0)?.children[0];
-  assert.ok(link, 'a hash with an explorer becomes a link');
+  // Walk the tree: message > wrapper div > the <a>.
+  const wrapper = dom.elements.get('message').childNodes.find((c) => c.tagName === 'DIV' && c.className === 'message-hash');
+  assert.ok(wrapper, 'a hash with an explorer gets a wrapper');
+  const link = wrapper.childNodes[0];
+  assert.equal(link.tagName, 'A');
   assert.equal(link.href, `https://basescan.org/tx/${hash}`);
 
   // A local chain has no explorer: the hash must still be shown, as text.
@@ -379,6 +451,95 @@ test('clearMessage hides and empties the message', async () => {
   render.clearMessage();
   assert.equal(dom.elements.get('message').hidden, true);
   assert.equal(dom.elements.get('message').visibleText, '');
+  assert.equal(dom.elements.get('message').childNodes.length, 0, 'the old <strong> must be REMOVED, not just have its text cleared');
+});
+
+/**
+ * @dev The regression test for the bug that broke the page in a real browser.
+ *
+ *     Uncaught (in promise) TypeError: Cannot set property length of
+ *     #<HTMLCollection> which has only a getter
+ *         at clearMessage (render.js:171)
+ *         at HTMLButtonElement.connect (main.js:175)
+ *
+ * `children` is read-only on a real element, so `node.children.length = 0` throws.
+ * That line was on EVERY message path, so nothing could report anything: the whole
+ * notification system was dead.
+ *
+ * It cannot be caught by asserting on message text, because the throw happens
+ * while clearing. So the two things that must hold are asserted directly:
+ *
+ *   1. the stub's `children` refuses assignment, the way an HTMLCollection does
+ *      (otherwise the test double hides the bug -- which is what happened);
+ *   2. clearMessage and renderMessage do not throw, and really empty the node.
+ */
+/**
+ * @dev The regression test for the bug that broke the page in a real browser.
+ *
+ *     Uncaught (in promise) TypeError: Cannot set property length of
+ *     #<HTMLCollection> which has only a getter
+ *         at clearMessage (render.js:171)
+ *         at HTMLButtonElement.connect (main.js:175)
+ *
+ * `children` is read-only on a real element, so `node.children.length = 0` throws.
+ * That line was on EVERY message path, so nothing could report anything: the whole
+ * notification system was dead in the browser while all 28 tests passed.
+ *
+ * A STATIC check, deliberately, rather than a DOM assertion. The behavioural test
+ * below (clear and re-render every message shape without throwing) cannot catch
+ * this, because render.js no longer contains the bad line -- and a stub cannot
+ * catch it either, because reproducing a read-only HTMLCollection faithfully is
+ * not something a plain object can do. Grepping the source is immune to both
+ * problems: it cannot be fooled by stub fidelity, and it fails the moment someone
+ * writes the line again.
+ */
+test('no module mutates children directly, because children is read-only in a browser', async () => {
+  const offenders = [];
+  for (const name of ['render.js', 'main.js', 'vault.js', 'wallet.js']) {
+    const source = readFileSync(resolve(REPO, 'web', 'app', name), 'utf8');
+    source.split('\n').forEach((rawLine, i) => {
+      // Strip comments first. The fix for this bug is documented in a comment that
+      // QUOTES the offending line, and matching that would fail the check on a
+      // correct file -- a false positive that would train someone to delete the
+      // explanation rather than keep the code right.
+      const line = rawLine.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '');
+      if (/^\s*\*/.test(rawLine)) return; // inside a block comment
+      // Assignment to `.children`, or to `.children.length` / `.childNodes.length`.
+      // `children.find(...)` and `children.map(...)` are reads and are fine.
+      if (/\.children\s*=/.test(line) || /\.(children|childNodes)\.length\s*=/.test(line)) {
+        offenders.push(`${name}:${i + 1}: ${rawLine.trim()}`);
+      }
+    });
+  }
+  assert.deepEqual(offenders, [], `children is read-only in a browser; empty a node with removeChild in a loop instead:\n${offenders.join('\n')}`);
+});
+
+test('clearing and re-rendering a message never throws, whatever it contained', async () => {
+  const { dom, render } = await loadRender();
+  const hash = `0x${'cd'.repeat(32)}`;
+
+  // Every shape of message the page can produce, cleared between each. The bug
+  // threw on the SECOND call, because the first left a <strong> behind.
+  const shapes = [
+    { tone: 'info', title: 'Connected', detail: 'Reading from chain 31337.' },
+    { tone: 'neutral', title: 'Cancelled', detail: 'You rejected the request in your wallet.' },
+    { tone: 'error', title: 'Reverted', detail: 'The contract refused it.', hash, explorerUrl: null },
+    { tone: 'ok', title: 'Deposit confirmed', detail: 'Re-read from the chain.', hash, explorerUrl: 'https://basescan.org' },
+    { tone: 'warn', title: 'Still pending', hash },
+  ];
+
+  for (const shape of shapes) {
+    assert.doesNotThrow(() => {
+      render.clearMessage();
+      render.renderMessage(shape);
+    }, `clearMessage/renderMessage threw for ${shape.title}`);
+  }
+
+  // And a final clear must leave nothing at all behind.
+  render.clearMessage();
+  assert.equal(dom.elements.get('message').visibleText, '');
+  assert.equal(dom.elements.get('message').childNodes.length, 0);
+  assert.equal(dom.elements.get('message').className, 'message');
 });
 
 test('renderControls disables with a reason rather than silently', async () => {

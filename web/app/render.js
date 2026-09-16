@@ -117,6 +117,39 @@ export function renderChain({ chainId, expectedChainId, expectedChainName, conne
 }
 
 /**
+ * Empty a node of everything it contains.
+ *
+ * WHY NOT ONE LINE OF ASSIGNMENT
+ *
+ * `textContent = ''` does NOT remove element children -- it only clears text
+ * nodes -- so a message that had been appended as `<strong>Failed</strong>` kept
+ * that element after being "cleared", and still read "Failed" to a screen reader.
+ *
+ * The obvious fix, `node.children.length = 0`, is WORSE: `children` is a read-only
+ * `HTMLCollection`, so assigning to `.length` throws
+ * "Cannot set property length of #<HTMLCollection> which has only a getter". It is
+ * a silent no-op in a test double whose `children` is a plain array, and a hard
+ * TypeError in a browser -- and because this runs on EVERY message path, the whole
+ * notification system was dead in a real browser while every test was green.
+ *
+ * `removeChild` in a loop is correct, is supported everywhere, and does not depend
+ * on `replaceChildren` (which is fine too, but is newer and there is no reason to
+ * require it here).
+ */
+function emptyNode(node) {
+  node.textContent = '';
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+/** Build a <div> with a class and some text. */
+function makeDiv(className, text) {
+  const div = document.createElement('div');
+  div.className = className;
+  div.textContent = text;
+  return div;
+}
+
+/**
  * Show a message.
  *
  * The tone is set by the failure class, not by the severity of the text. A user
@@ -127,23 +160,16 @@ export function renderChain({ chainId, expectedChainId, expectedChainName, conne
 export function renderMessage({ tone = 'info', title = '', detail = '', hash = null, explorerUrl = null } = {}) {
   const node = el('message');
   node.className = `message ${tone}`;
-  node.textContent = '';
-  node.children.length = 0; // see clearMessage: textContent does not drop elements
+  emptyNode(node);
 
   const heading = document.createElement('strong');
   heading.textContent = title;
   node.appendChild(heading);
 
-  if (detail) {
-    const body = document.createElement('div');
-    body.className = 'message-detail';
-    body.textContent = detail;
-    node.appendChild(body);
-  }
+  if (detail) node.appendChild(makeDiv('message-detail', detail));
 
   if (hash) {
-    const wrap = document.createElement('div');
-    wrap.className = 'message-hash';
+    const wrap = makeDiv('message-hash', explorerUrl ? '' : hash);
     if (explorerUrl) {
       const link = document.createElement('a');
       link.href = `${explorerUrl.replace(/\/$/, '')}/tx/${hash}`;
@@ -151,8 +177,6 @@ export function renderMessage({ tone = 'info', title = '', detail = '', hash = n
       link.rel = 'noopener noreferrer';
       link.textContent = hash;
       wrap.appendChild(link);
-    } else {
-      wrap.textContent = hash;
     }
     node.appendChild(wrap);
   }
@@ -163,12 +187,7 @@ export function renderMessage({ tone = 'info', title = '', detail = '', hash = n
 export function clearMessage() {
   const node = el('message');
   node.hidden = true;
-  // `textContent = ''` does NOT remove element children -- it only clears text
-  // nodes. renderMessage appends a <strong> and possibly a detail div, and an
-  // earlier version of this function left both in the DOM, so a cleared message
-  // still read "Failed" to anything inspecting the node (and to a screen reader).
-  node.textContent = '';
-  node.children.length = 0;
+  emptyNode(node);
   node.className = 'message';
 }
 
