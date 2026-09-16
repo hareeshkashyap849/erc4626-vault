@@ -126,7 +126,7 @@ export function describeFailure(classified) {
     case FailureClass.CHAIN:
       return { tone: 'error', title: 'Wrong network', detail: 'Your wallet is on a different chain than this vault. Switch networks and try again.' };
     case FailureClass.ALLOWANCE:
-      return { tone: 'error', title: 'Approval needed', detail: 'The vault is not approved to move that much USDC yet.' };
+      return { tone: 'error', title: 'Approval needed', detail: 'The vault is not approved to move that many tokens yet.' };
     case FailureClass.REVERT:
       return { tone: 'error', title: 'The contract refused it', detail: classified.message };
     case FailureClass.FUNDS:

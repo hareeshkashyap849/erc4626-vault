@@ -154,6 +154,13 @@ Step 4 "writing $outFile"
 $record = [ordered]@{
   chainId     = $CHAIN_ID
   rpcUrl      = $RPC
+  # The page reads through the dev server's same-origin /api/rpc proxy, but a
+  # wallet cannot use that: `wallet_addEthereumChain` needs a URL the wallet
+  # itself can reach, so the real endpoint is recorded separately. Named for what
+  # it is for, because the two must not be swapped -- a wallet pointed at
+  # /api/rpc would be a relative URL with no origin to resolve against.
+  walletRpcUrl = $RPC
+  chainName   = 'Anvil Local'
   vault       = $vault
   asset       = $asset
   owner       = $env:OWNER_ADDRESS

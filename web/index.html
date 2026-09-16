@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ERC-4626 Yield Vault</title>
+<!--
+  No build step, no framework, no bundle. See web/DESIGN.md §1 for why.
+  Addresses are NOT written here: they come from /api/config, which reads
+  deployments/local.json, so this file has no chain-specific constants in it and
+  cannot show an address the deployment record does not contain.
+-->
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <h1>ERC-4626 Yield Vault</h1>
+    <p class="subtitle">Deposit an ERC-20, hold shares, redeem them.</p>
+  </div>
+  <div class="wallet-box">
+    <div class="wallet-line">
+      <span class="label">Account</span>
+      <span id="account" class="account disconnected">not connected</span>
+    </div>
+    <div class="wallet-line">
+      <span class="label">Network</span>
+      <span id="chain" class="chain">unknown network</span>
+    </div>
+    <div class="wallet-actions">
+      <button id="connect-button" type="button">Connect wallet</button>
+      <button id="refresh-button" type="button" class="secondary">Refresh</button>
+    </div>
+  </div>
+</header>
+
+<!-- Shown only when the wallet is on a chain this deployment is not on. Blocking
+     deposits here rather than letting them revert is the difference between a
+     guard and an error message. -->
+<div id="wrong-chain-guard" class="guard" hidden>
+  <strong>Wrong network.</strong>
+  <span>Your wallet is on a different chain than this vault is deployed to. Switch networks to continue.</span>
+  <button id="switch-chain-button" type="button">Switch network</button>
+</div>
+
+<!-- The one place messages appear. Tone is set by the failure class: a user
+     rejecting a transaction is shown neutrally, not in red. -->
+<div id="message" class="message" hidden></div>
+
+<noscript>
+  <div class="guard">
+    <strong>JavaScript is required.</strong>
+    <span>This page reads the chain directly from your browser; there is no server-side rendering to fall back on.</span>
+  </div>
+</noscript>
+
+<main>
+  <section class="panel">
+    <h2>Your position</h2>
+    <div id="stale-marker" class="stale" hidden></div>
+    <dl class="figures">
+      <div><dt>Wallet balance</dt><dd id="wallet-balance">—</dd></div>
+      <div><dt>Approved allowance</dt><dd id="allowance">—</dd></div>
+      <div><dt>Your shares</dt><dd id="share-balance">—</dd></div>
+      <div><dt>Those shares are worth <span class="hint">(estimate)</span></dt><dd id="share-value">—</dd></div>
+      <div><dt>Withdrawable now</dt><dd id="max-withdraw">—</dd></div>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>Vault</h2>
+    <dl class="figures">
+      <div><dt>Total assets</dt><dd id="total-assets">—</dd></div>
+      <div><dt>Total shares</dt><dd id="total-supply">—</dd></div>
+      <div><dt>Price per share <span class="hint">(assets)</span></dt><dd id="share-price">—</dd></div>
+      <div><dt>Asset</dt><dd id="asset-symbol">—</dd></div>
+    </dl>
+  </section>
+
+  <section class="panel actions">
+    <h2>Deposit</h2>
+    <p class="note">
+      A deposit is one transaction if the vault already has enough allowance, and
+      two if it does not — the first is the token approval, the second is the
+      deposit. If you reject either one, the page tells you which step stopped.
+    </p>
+    <div class="row">
+      <input id="deposit-amount" type="text" inputmode="decimal" autocomplete="off"
+             spellcheck="false" placeholder="0.0" aria-label="Amount to deposit">
+      <button id="deposit-button" type="button">Deposit</button>
+      <button id="approve-button" type="button" class="secondary">Approve only</button>
+    </div>
+
+    <h2>Redeem</h2>
+    <p class="note">
+      Redeeming returns assets and burns shares. No approval is needed to redeem.
+    </p>
+    <div class="row">
+      <input id="redeem-amount" type="text" inputmode="decimal" autocomplete="off"
+             spellcheck="false" placeholder="0.0" aria-label="Shares to redeem">
+      <button id="redeem-button" type="button">Redeem</button>
+      <button id="redeem-max-button" type="button" class="secondary">Max</button>
+    </div>
+
+    <p id="control-hint" class="hint-line"></p>
+    <p id="busy" class="busy" hidden></p>
+  </section>
+
+  <section class="panel">
+    <h2>This deployment</h2>
+    <dl class="figures">
+      <div><dt>Vault</dt><dd id="vault-address">—</dd></div>
+      <div><dt>Asset</dt><dd id="asset-address">—</dd></div>
+      <div><dt>Chain ID</dt><dd id="chain-id">—</dd></div>
+      <div><dt>Deployed at block</dt><dd id="deploy-block">—</dd></div>
+    </dl>
+    <p class="note" id="deployment-note"></p>
+  </section>
+</main>
+
+<footer>
+  <p>
+    Reads go straight to the chain; no figure on this page is taken from a
+    transaction receipt. Source and design notes:
+    <code>web/DESIGN.md</code>.
+  </p>
+</footer>
+
+<script type="module" src="./app/main.js"></script>
+</body>
+</html>

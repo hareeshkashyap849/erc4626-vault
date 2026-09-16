@@ -1,0 +1,334 @@
+/*
+ * Styles.
+ *
+ * One file, no framework, no CSS-in-JS, no build step (web/DESIGN.md §1).
+ *
+ * Two things here are doing work rather than decoration:
+ *
+ *   - The four message tones. A user rejecting a transaction is `neutral`, not
+ *     `error`, and the difference has to survive all the way to the pixel or the
+ *     classification upstream was pointless.
+ *   - `font-variant-numeric: tabular-nums` on every figure. Balances are compared
+ *     down a column, and proportional digits make that harder than it needs to be.
+ */
+
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --edge: #262d38;
+  --ink: #e6edf3;
+  --muted: #8b949e;
+  --accent: #4c8dff;
+  --ok: #2ea043;
+  --warn: #d29922;
+  --error: #f85149;
+  --neutral: #6e7681;
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.92em;
+  background: #1f2630;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ topbar */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--edge);
+  background: var(--panel);
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.wallet-box {
+  min-width: 320px;
+}
+
+.wallet-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.wallet-line .label {
+  color: var(--muted);
+  width: 60px;
+  flex: none;
+}
+
+.account,
+.chain {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  word-break: break-all;
+}
+
+.account.disconnected {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.chain.ok {
+  color: var(--ok);
+}
+
+.chain.bad {
+  color: var(--error);
+}
+
+.wallet-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--edge);
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+input[type='text'] {
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--edge);
+  background: #0b0e13;
+  color: var(--ink);
+  width: 180px;
+}
+
+input[type='text']:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------- guards and messages */
+
+.guard {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 14px 24px 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--warn);
+  background: rgba(210, 153, 34, 0.1);
+  font-size: 14px;
+}
+
+.message {
+  margin: 14px 24px 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border-left: 4px solid var(--neutral);
+  background: var(--panel);
+  font-size: 14px;
+}
+
+.message-detail {
+  margin-top: 4px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.message-hash {
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--muted);
+}
+
+.message a {
+  color: var(--accent);
+}
+
+/* The tone decides the colour. `neutral` exists so that a deliberate user
+   rejection is not painted like a fault. */
+.message.neutral {
+  border-left-color: var(--neutral);
+}
+
+.message.info {
+  border-left-color: var(--accent);
+}
+
+.message.ok {
+  border-left-color: var(--ok);
+}
+
+.message.warn {
+  border-left-color: var(--warn);
+}
+
+.message.error {
+  border-left-color: var(--error);
+}
+
+/* ------------------------------------------------------------------ layout */
+
+main {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 18px;
+  padding: 18px 24px 8px;
+  align-items: start;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.panel.actions {
+  grid-column: 1 / -1;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.panel h2:not(:first-child) {
+  margin-top: 22px;
+}
+
+.figures {
+  margin: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.figures > div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px dashed var(--edge);
+  padding-bottom: 6px;
+}
+
+.figures > div:last-child {
+  border-bottom: 0;
+}
+
+.figures dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.figures dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-all;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.note,
+.hint-line,
+.busy,
+.stale {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.note {
+  margin: 0 0 10px;
+}
+
+.hint-line {
+  margin: 12px 0 0;
+  min-height: 1.2em;
+}
+
+.busy {
+  margin: 6px 0 0;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  word-break: break-all;
+}
+
+.stale {
+  margin: 0 0 10px;
+  color: var(--warn);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+footer {
+  padding: 6px 24px 28px;
+  color: var(--muted);
+  font-size: 12px;
+}

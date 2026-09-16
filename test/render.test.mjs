@@ -1,0 +1,441 @@
+/**
+ * DOM tests for render.js and the page wiring.
+ *
+ * WHY A HAND-WRITTEN DOM STUB RATHER THAN jsdom
+ *
+ * jsdom is not installable here (no npm registry), and it would be a large
+ * dependency to add for a page with no framework. The stub below implements only
+ * what `render.js` and `main.js` actually use, and it implements it strictly:
+ * `getElementById` returns null for an unknown id, so a typo throws instead of
+ * silently doing nothing.
+ *
+ * WHAT THIS CATCHES THAT check-modules.mjs DOES NOT
+ *
+ * `check-modules.mjs` proves the module graph links and that the ids the JS looks
+ * up exist in index.html. It executes nothing. So it cannot see that
+ * `renderMessage` calls `document.createElement`, that `renderControls` reads
+ * `.disabled`, or that a function references a variable that is never defined at
+ * runtime. Those are exactly the failures that produce a blank page.
+ *
+ * render.js is loaded through a `vm` context with the stub installed as its
+ * globals, so this is the real module, unmodified -- not a copy.
+ *
+ * NOT covered: layout, CSS, and anything a real browser does that a stub does
+ * not. The manual checklist in web/DESIGN.md §7 remains necessary.
+ *
+ * Run: node test/render.test.mjs
+ */
+import { strict as assert } from 'node:assert';
+import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO = resolve(HERE, '..');
+
+// ---------------------------------------------------------------- DOM stub
+
+/**
+ * A DOM node, only as capable as this page needs.
+ *
+ * `className` and `hidden` are plain properties; every write is recorded so a
+ * test can assert on the final state rather than on a sequence of calls.
+ */
+class StubNode {
+  constructor(tagName, id = null) {
+    this.tagName = tagName.toUpperCase();
+    this.id = id;
+    this.children = [];
+    this.textContent = '';
+    this.className = '';
+    this.hidden = false;
+    this.disabled = false;
+    this.title = '';
+    this.href = '';
+    this.target = '';
+    this.rel = '';
+    this.value = '';
+    this.listeners = new Map();
+  }
+
+  appendChild(child) {
+    this.children.push(child);
+    return child;
+  }
+
+  addEventListener(type, fn) {
+    if (!this.listeners.has(type)) this.listeners.set(type, []);
+    this.listeners.get(type).push(fn);
+  }
+
+  /** Fire a listener, so the wiring in main.js is exercised, not just present. */
+  async dispatch(type) {
+    for (const fn of this.listeners.get(type) ?? []) await fn({ type });
+  }
+
+  /** All text under this node, including children -- what a reader would see. */
+  get visibleText() {
+    return this.textContent + this.children.map((c) => c.visibleText).join('');
+  }
+}
+
+/** The set of ids index.html defines, read from the file rather than duplicated. */
+function idsFromIndexHtml() {
+  const html = readFileSync(resolve(REPO, 'web', 'index.html'), 'utf8');
+  const ids = new Set();
+  for (const m of html.matchAll(/\bid="([^"]+)"/g)) ids.add(m[1]);
+  return ids;
+}
+
+function makeDom() {
+  const known = idsFromIndexHtml();
+  const elements = new Map();
+  for (const id of known) elements.set(id, new StubNode('div', id));
+
+  const document = {
+    getElementById(id) {
+      // Strict: an unknown id is null, the same thing a browser returns. A typo
+      // therefore throws inside render.js's `el()` rather than passing quietly.
+      return elements.get(id) ?? null;
+    },
+    createElement: (tag) => new StubNode(tag),
+  };
+
+  return { document, elements, known };
+}
+
+const RENDER = resolve(REPO, 'web', 'app', 'render.js');
+
+/**
+ * Load the real render.js with the DOM stub installed as its globals.
+ *
+ * `vm.Script` cannot do this: render.js has an `import`, so a plain Script throws
+ * "Cannot use import statement outside a module". `vm.SourceTextModule` is the ESM
+ * path, and it requires `--experimental-vm-modules`.
+ *
+ * `vm` does not hand a SourceTextModule's namespace back to the host, so ONE line
+ * is appended to publish the module's own bindings onto the shared context. That
+ * appended line is the only difference from the file on disk; every function under
+ * test is the shipped one, linked against the shipped `formatUnits` from vault.js.
+ */
+async function loadRender() {
+  const dom = makeDom();
+  const context = vm.createContext({
+    document: dom.document,
+    console,
+    setTimeout,
+    clearTimeout,
+    URL,
+    location: { origin: 'http://127.0.0.1:5173' },
+  });
+
+  const cache = new Map();
+  const load = (path, transform = (s) => s) => {
+    const key = resolve(path);
+    if (!cache.has(key)) {
+      cache.set(key, new vm.SourceTextModule(transform(readFileSync(key, 'utf8')), { identifier: key, context }));
+    }
+    return cache.get(key);
+  };
+
+  const publish = (names) => `\nglobalThis.__exports = { ${names.join(', ')} };`;
+  const renderSource = readFileSync(RENDER, 'utf8');
+  const exportedNames = [...renderSource.matchAll(/^export (?:function|const) (\w+)/gm)].map((m) => m[1]);
+  assert.ok(exportedNames.length > 5, `could not read render.js's exports (found ${exportedNames.length})`);
+
+  const root = load(RENDER, (source) => source + publish(exportedNames));
+  await root.link(async (specifier, referencing) => {
+    if (!specifier.startsWith('.')) throw new Error(`unexpected bare specifier "${specifier}" in the render layer`);
+    const from = referencing ? dirname(referencing.identifier) : dirname(RENDER);
+    // vault.js re-exports nothing render.js needs beyond formatUnits, but it is
+    // linked as the real module so the function under test is the shipped one.
+    return load(resolve(from, specifier));
+  });
+  await root.evaluate();
+
+  return { dom, render: context.__exports };
+}
+
+/** A representative read state: 12.5 mUSDC in a vault holding 100. */
+const STATE = {
+  assetDecimals: 6,
+  shareDecimals: 18,
+  symbol: 'mUSDC',
+  shares: 12_500_000_000_000_000_000n,
+  shareValue: 12_500_000n,
+  totalAssets: 100_000_000n,
+  totalSupply: 100_000_000_000_000_000_000n,
+  allowance: 5_000_000n,
+  walletBalance: 87_500_000n,
+  maxWithdraw: 12_500_000n,
+  sharePrice: '1.000000',
+};
+
+// --------------------------------------------------------------------- tests
+
+test('renderState writes every figure, formatted with the right decimals', async () => {
+  const { dom, render } = await loadRender();
+  render.renderState(STATE, { symbol: 'mUSDC' });
+
+  const text = (id) => dom.elements.get(id).visibleText;
+
+  assert.equal(text('wallet-balance'), '87.5 mUSDC', 'the asset balance uses the asset decimals');
+  assert.equal(text('allowance'), '5', 'the allowance is in asset units');
+  assert.equal(text('share-balance'), '12.5', 'the share balance uses the SHARE decimals (18)');
+  assert.equal(text('share-value'), '12.5');
+  assert.equal(text('max-withdraw'), '12.5');
+  assert.equal(text('total-assets'), '100 mUSDC');
+  assert.equal(text('total-supply'), '100');
+  assert.equal(text('share-price'), '1.000000');
+  assert.equal(text('asset-symbol'), 'mUSDC');
+});
+
+/**
+ * @dev The decimals bug, at the rendering layer.
+ *
+ * Shares are 18-decimal and the asset is 6-decimal, so formatting a share balance
+ * with the asset's decimals shows a number 10^12 times too small. Both halves are
+ * asserted here because the bug looks plausible either way.
+ */
+test('renderState does not format shares with the asset decimals', async () => {
+  const { dom, render } = await loadRender();
+  render.renderState(STATE, { symbol: 'mUSDC' });
+
+  const shares = dom.elements.get('share-balance').visibleText;
+  const wrong = dom.elements.get('wallet-balance').visibleText;
+
+  assert.equal(shares, '12.5');
+  assert.notEqual(shares, '0.0000125', 'that is what 18-decimal shares look like formatted as 6-decimal');
+  assert.ok(wrong.startsWith('87.5'), 'the asset balance is a different number in different units');
+});
+
+test('renderState with an empty vault says so instead of showing a price', async () => {
+  const { dom, render } = await loadRender();
+  render.renderState({ ...STATE, sharePrice: null, totalAssets: 0n, totalSupply: 0n, shares: 0n }, { symbol: 'mUSDC' });
+
+  const price = dom.elements.get('share-price').visibleText;
+  assert.match(price, /n\/a/, `an empty vault has no price, got "${price}"`);
+  assert.doesNotMatch(price, /1\.0/, 'showing 1.0 would invent a price');
+});
+
+test('renderState marks stale figures when told they are stale', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderState(STATE, { symbol: 'mUSDC', stale: false });
+  assert.equal(dom.elements.get('stale-marker').hidden, true, 'fresh figures carry no marker');
+
+  // Stale figures stay on screen: blanking them would read as "you have nothing".
+  render.renderState(STATE, { symbol: 'mUSDC', stale: true });
+  assert.equal(dom.elements.get('stale-marker').hidden, false);
+  assert.match(dom.elements.get('stale-marker').visibleText, /earlier read/);
+  assert.equal(dom.elements.get('wallet-balance').visibleText, '87.5 mUSDC', 'the last known figure is still shown');
+});
+
+test('renderAccount shows the full address and flags not-connected', async () => {
+  const { dom, render } = await loadRender();
+  const address = '0xa0Ee7A142d267C1f36714E4a8F75612F20a79720';
+
+  render.renderAccount(address);
+  assert.equal(dom.elements.get('account').textContent, address, 'the full address, so it can be copied');
+  assert.equal(dom.elements.get('account').title, address);
+  assert.match(dom.elements.get('account').className, /connected/);
+
+  render.renderAccount(null);
+  assert.equal(dom.elements.get('account').textContent, 'not connected');
+  assert.match(dom.elements.get('account').className, /disconnected/);
+});
+
+test('renderChain accepts the expected chain and names the actual one when wrong', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderChain({ chainId: 31337, expectedChainId: 31337, expectedChainName: 'Anvil Local' });
+  assert.match(dom.elements.get('chain').className, /ok/);
+  assert.equal(dom.elements.get('wrong-chain-guard').hidden, true);
+
+  // The guard must be VISIBLE on the wrong chain and must name the chain the user
+  // is actually on, because "wrong network" alone does not help anyone fix it.
+  render.renderChain({ chainId: 1, expectedChainId: 31337, expectedChainName: 'Anvil Local' });
+  assert.match(dom.elements.get('chain').className, /bad/);
+  assert.equal(dom.elements.get('wrong-chain-guard').hidden, false);
+  assert.match(dom.elements.get('chain').visibleText, /1/);
+  assert.match(dom.elements.get('chain').visibleText, /31337/);
+});
+
+test('renderChain treats an unknown chain as bad rather than as fine', async () => {
+  const { dom, render } = await loadRender();
+  render.renderChain({ chainId: null, expectedChainId: 31337, expectedChainName: 'Anvil Local' });
+  assert.match(dom.elements.get('chain').className, /bad/);
+  assert.equal(dom.elements.get('wrong-chain-guard').hidden, false, 'not knowing the chain is not the same as being on the right one');
+});
+
+/**
+ * @dev Failure class 2, at the point it becomes visible.
+ *
+ * A user rejecting a transaction made a deliberate choice, so their message must
+ * not be styled as an error. This is asserted through the real renderMessage
+ * rather than by reading the classify() table, because the tone has to survive
+ * the whole path from classification to DOM.
+ */
+test('a user rejection is rendered neutrally, not as an error', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderMessage({ tone: 'neutral', title: 'Cancelled', detail: 'You rejected the request in your wallet.' });
+
+  const message = dom.elements.get('message');
+  assert.match(message.className, /neutral/);
+  assert.doesNotMatch(message.className, /error/, 'rejecting your own transaction is not an error');
+  assert.equal(message.hidden, false);
+  assert.match(message.visibleText, /Cancelled/);
+});
+
+test('an error message can carry a transaction hash and an explorer link', async () => {
+  const { dom, render } = await loadRender();
+  const hash = `0x${'ab'.repeat(32)}`;
+
+  render.renderMessage({ tone: 'error', title: 'Reverted', hash, explorerUrl: 'https://basescan.org' });
+  const link = dom.elements.get('message').children.find((c) => c.children.length > 0)?.children[0];
+  assert.ok(link, 'a hash with an explorer becomes a link');
+  assert.equal(link.href, `https://basescan.org/tx/${hash}`);
+
+  // A local chain has no explorer: the hash must still be shown, as text.
+  render.clearMessage();
+  render.renderMessage({ tone: 'ok', title: 'Deposit confirmed', hash, explorerUrl: null });
+  assert.match(dom.elements.get('message').visibleText, new RegExp(hash.slice(0, 10)));
+});
+
+test('clearMessage hides and empties the message', async () => {
+  const { dom, render } = await loadRender();
+  render.renderMessage({ tone: 'error', title: 'Failed' });
+  assert.equal(dom.elements.get('message').hidden, false);
+
+  render.clearMessage();
+  assert.equal(dom.elements.get('message').hidden, true);
+  assert.equal(dom.elements.get('message').visibleText, '');
+});
+
+test('renderControls disables with a reason rather than silently', async () => {
+  const { dom, render } = await loadRender();
+  const hint = () => dom.elements.get('control-hint').visibleText;
+
+  render.renderControls({ connected: false, correctChain: false, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.equal(dom.elements.get('deposit-button').disabled, true);
+  assert.equal(dom.elements.get('redeem-button').disabled, true);
+  assert.match(hint(), /connect/i, 'a disabled button must say why');
+
+  render.renderControls({ connected: true, correctChain: false, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.equal(dom.elements.get('deposit-button').disabled, true);
+  assert.match(hint(), /network/i);
+
+  render.renderControls({ connected: true, correctChain: true, busy: true, amountIsValid: true, sharesToRedeem: true });
+  assert.equal(dom.elements.get('deposit-button').disabled, true);
+  assert.match(hint(), /in progress/i);
+
+  render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: false, sharesToRedeem: false });
+  assert.equal(dom.elements.get('deposit-button').disabled, true, 'no amount means nothing to deposit');
+  assert.match(hint(), /amount/i);
+
+  render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.equal(dom.elements.get('deposit-button').disabled, false);
+  assert.equal(dom.elements.get('redeem-button').disabled, false);
+  assert.equal(hint(), '', 'nothing to explain when nothing is blocked');
+});
+
+test('renderControls shows the caller-supplied hint when not otherwise blocked', async () => {
+  const { dom, render } = await loadRender();
+  render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true, hint: 'the vault can pay out 1 right now' });
+  assert.match(dom.elements.get('control-hint').visibleText, /pay out 1/);
+});
+
+test('renderBusy toggles the indicator and does not touch the buttons', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderBusy(true, 'waiting for the deposit prompt');
+  assert.equal(dom.elements.get('busy').hidden, false);
+  assert.match(dom.elements.get('busy').visibleText, /deposit prompt/);
+
+  render.renderBusy(false);
+  assert.equal(dom.elements.get('busy').hidden, true);
+});
+
+/**
+ * @dev The bug this test exists for.
+ *
+ * An earlier `renderBusy` also disabled buttons, with
+ * `node.disabled = busy ? true : node.disabled` -- which never re-enabled
+ * anything, so the page was permanently dead after one transaction. It also meant
+ * two different functions decided the same thing. renderBusy now only draws the
+ * indicator, and renderControls is the single owner of the disabled state.
+ */
+test('renderBusy(false) does not leave the buttons disabled', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderControls({ connected: true, correctChain: true, busy: true, amountIsValid: true, sharesToRedeem: true });
+  assert.equal(dom.elements.get('deposit-button').disabled, true);
+
+  render.renderBusy(false);
+  render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.equal(dom.elements.get('deposit-button').disabled, false, 'the page must come back to life after a transaction');
+});
+
+test('renderDeployment shows the full addresses and the block', async () => {
+  const { dom, render } = await loadRender();
+  render.renderDeployment({
+    vault: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0',
+    asset: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+    chainId: 31337,
+    deployBlock: 8,
+    note: 'One disposable local chain.',
+  });
+
+  // Full, not shortened: the useful thing to do with these is paste them.
+  assert.equal(dom.elements.get('vault-address').textContent, '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0');
+  assert.equal(dom.elements.get('asset-address').textContent, '0x5FbDB2315678afecb367f032d93F642f64180aa3');
+  assert.equal(dom.elements.get('chain-id').textContent, '31337');
+  assert.equal(dom.elements.get('deploy-block').textContent, '8');
+  assert.match(dom.elements.get('deployment-note').visibleText, /disposable/);
+});
+
+test('renderDeployment says "unknown" for a record with no deployBlock', async () => {
+  const { dom, render } = await loadRender();
+  render.renderDeployment({ vault: '0x1', asset: '0x2', chainId: 1 });
+  assert.equal(dom.elements.get('deploy-block').textContent, 'unknown', 'a missing block must not render as "undefined"');
+});
+
+test('el() throws on an id that does not exist, rather than returning undefined', async () => {
+  const { render } = await loadRender();
+  assert.throws(() => render.el('no-such-element'), /missing element #no-such-element/);
+});
+
+test('every function render.js exports is callable with a complete argument', async () => {
+  // A cheap guard against a function that is exported but never exercised above:
+  // an uncaught TypeError here is a blank page in a browser.
+  const { render } = await loadRender();
+  const calls = {
+    el: () => render.el('message'),
+    setText: () => render.setText('message', 'x'),
+    shortenAddress: () => render.shortenAddress('0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'),
+    renderState: () => render.renderState(STATE, { symbol: 'mUSDC' }),
+    renderAccount: () => render.renderAccount(null),
+    renderChain: () => render.renderChain({ chainId: 31337, expectedChainId: 31337, expectedChainName: 'Anvil Local' }),
+    renderMessage: () => render.renderMessage({ tone: 'info', title: 't', detail: 'd' }),
+    clearMessage: () => render.clearMessage(),
+    renderControls: () => render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true }),
+    renderBusy: () => render.renderBusy(false),
+    renderDeployment: () => render.renderDeployment({ chainId: 1 }),
+  };
+
+  const exported = Object.keys(render).filter((k) => typeof render[k] === 'function');
+  for (const name of exported) {
+    assert.ok(calls[name], `render.js exports ${name}, which this test does not call`);
+    assert.doesNotThrow(calls[name], `${name} threw`);
+  }
+});
+
+test('shortenAddress keeps short strings intact instead of mangling them', async () => {
+  const { render } = await loadRender();
+  assert.equal(render.shortenAddress('0x1234'), '0x1234');
+  assert.equal(render.shortenAddress(null), '');
+  assert.equal(render.shortenAddress('0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'), '0xa0Ee…9720');
+});

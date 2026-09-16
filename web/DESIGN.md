@@ -1,6 +1,6 @@
 # P3 — Wallet dApp: design
 
-> **Status: design agreed, implementation in progress.**
+> **Status: implemented and tested to the wallet boundary; §7 not yet run.**
 > Depends on: `ARCHITECTURE.md` §11 (the five failure classes), `deployments/README.md`
 > (the record the dApp reads).
 
@@ -42,17 +42,28 @@ The cost is real and is stated in §5 rather than hidden.
 ```
 browser
   index.html          the page, no bundler
-  app/…
-    wallet.js         EIP-1193 client: connect, chain, accounts, send
-    chain.js          reads deployments/local.json via the server
-    vault.js          the ERC-4626 calls, and the approval state machine
-    errors.js         the five failure classes, decoded to something readable
+  style.css           one stylesheet, no framework
+  app/
+    main.js           wiring only: the one file that knows both the chain and the DOM
+    wallet.js         EIP-1193 client: connect, chain, accounts, nonce-tracked send
+    vault.js          the ERC-4626 calls, the approval state machine, the share math
     render.js         DOM only; no logic worth testing lives here
-  vendor/viem/        27 files, verified to load and export correctly
+    viem.js           one re-export, so no module ever imports a hashed vendor file
+  vendor/             27 files, verified to load and export correctly
+  tools/
+    dev-server.mjs    serves web/, exposes /api/config, proxies /api/rpc
+    check-modules.mjs links the whole module graph without executing it
+    check-vendor.mjs  verifies the vendored viem graph
 
 node server
-  tools/dev-server.mjs   serves web/, exposes /api/config, proxies /api/rpc
+  tools/dev-server.mjs
 ```
+
+`errors.js` and `chain.js` were in the first draft of this section and do not
+exist: failure classification lives beside the client that produces the failures
+(`wallet.js`), and the deployment record is read once by `main.js`. Splitting them
+out would have been tidier in a diagram and worse in practice, because it would
+have separated each failure class from the code that detects it.
 
 The server exists for three reasons and no others:
 
@@ -111,28 +122,66 @@ complete. That is a state machine with three states, not a boolean.
 
 ## 6. What must be tested, and how
 
-The wallet layer is the risky part, so it is the part with tests. There is no
-headless browser available, so the tests exercise the layer directly:
+There is no headless browser available, so the tests exercise the layers directly
+rather than through the page:
 
-| Behaviour | How it is checked |
-|---|---|
-| the approval state machine | unit tests over the three states, including the approve-succeeded/deposit-rejected case |
-| error classification | each of the five classes fed a representative EIP-1193 or viem error and checked for the right classification |
-| the chain guard | a wrong-chain result is refused before any write is attempted |
-| the ABI and addresses | read from `/api/config` and checked against the deployment record |
-| the page renders and draws | a DOM smoke test, in the same spirit as the indexer project's dashboard check |
+| Behaviour | How it is checked | File |
+|---|---|---|
+| the approval state machine | unit tests over the three states | `test/vault.test.mjs` |
+| the share arithmetic | unit tests against hand-computed ERC-4626 values | `test/vault.test.mjs` |
+| amount parsing | unit tests, including the refusal to round | `test/vault.test.mjs` |
+| error classification | each failure class fed a representative EIP-1193 or viem error | `test/wallet.test.mjs` |
+| the chain guard | a wrong-chain result is refused before any write | `test/wallet.test.mjs` |
+| **the deposit path end to end** | the real `deposit()` driven through a real viem client against a fake JSON-RPC chain that actually moves balances | `test/integration.test.mjs` |
+| the module graph | every module parsed and linked in `vm.SourceTextModule` without executing, so a missing export or a moved file is an error rather than a blank page | `web/tools/check-modules.mjs` |
+| the DOM ids | every id the JS looks up is checked against `index.html` | same |
+| the vendored viem | the whole graph linked and evaluated, 21 required exports checked behaviourally | `web/tools/check-vendor.mjs` |
 
-**Not tested:** real wallet interactions. That needs a person clicking approve in
-a browser, and it is the manual checklist in §7.
+The integration test is the one that earns its keep. It is not a mock of our own
+functions: it fakes only the JSON-RPC provider at the bottom, so ABI encoding, the
+transport, the allowance read and the nonce tracking are all the shipped code. It
+caught two bugs that unit tests could not have:
+
+1. **A wrong virtual-share term.** `readState` used `10 ** shareDecimals` (10¹⁸)
+   where ERC-4626 specifies `10 ** _decimalsOffset()` (10¹², because YieldVault
+   sets the offset to `18 - assetDecimals`). The reported per-share value was
+   24,038,462/25,000,000 of the truth — a 4% error that printed as a perfectly
+   plausible number. It was found by asserting that `shareValue` and `maxWithdraw`
+   agree, which they must, since OpenZeppelin defines `maxWithdraw(owner)` as
+   `previewRedeem(maxRedeem(owner))`.
+2. **A reverted transaction reported as success.** `sendAndTrack` returns
+   `status: 'reverted'` rather than throwing, because a reverted transaction was
+   still mined and still cost gas. `main.js` ignored the status and showed
+   "Deposit confirmed" either way. The user would have seen a success message and
+   an unchanged balance.
+
+Both are now covered by regression tests. Neither was found by reading the code,
+and the second was not found by any unit test — it needed the write path exercised
+with a failing transaction.
+
+**Not tested:** real wallet interactions, and the page in a real browser. That
+needs a person clicking approve, and it is the manual checklist in §7.
 
 ## 7. Manual checklist, for the human with the wallet
+
+**Status: NOT YET RUN.** Everything below is written but unverified against a real
+browser and a real wallet. Until someone walks this list, the honest description of
+P3 is "implemented and tested up to the wallet boundary", not "working".
 
 Each line is something only a person with a browser wallet can confirm:
 
 1. connect → the account and chain appear
-2. switch the wallet to a different chain → the page says so **before** any write
-3. `approve` → a wallet prompt appears, and the allowance updates afterwards
-4. deposit → shares appear, and the balance is re-read from the chain, not assumed
-5. **reject** the deposit in the wallet → no error is shown, state returns to idle
-6. deposit again immediately → **no second approval is requested** (class 3)
-7. redeem everything → the balance returns to what it was, minus rounding
+2. switch the wallet to a different chain → the page says so **before** any write,
+   and the deposit button is disabled rather than sending a doomed transaction
+3. deposit → a wallet prompt appears for the approval, then a second for the
+   deposit, and the figures update afterwards
+4. **reject the approval** → the page says "Cancelled" in a neutral tone, not an
+   error, and the deposit button works again immediately
+5. deposit again → it is back to two prompts, because the first approval was
+   never granted
+6. approve with the **Approve only** button → one prompt, then deposit → **one**
+   prompt, not two (this is the "already approved" path)
+7. **reject the deposit** after a successful approval → neutral message, and
+   depositing again asks for **only** the deposit, never a second approval
+   (failure class 3, the case that matters)
+8. redeem everything → the balance returns to what it was, minus rounding
