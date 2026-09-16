@@ -17,25 +17,57 @@ write, and so that the second repository has something specific to depend on.
 
 ## The record format
 
+**One shape for both files, and `local.json` is the reference implementation.** An earlier version of
+this file documented a *different* format for `base-sepolia.json` — `address` instead of `vault`, and
+`asset` as an object with `symbol` and `decimals` — while the console reads `vault` and `asset` as
+strings. Nothing had been deployed yet, so nothing caught it: the first testnet deployment would have
+produced a record that `loadDeployment()` **refuses** ("The deployment record at … has no \"vault\""),
+at the end of a deployment, on a machine that had just spent test ETH.
+
+So the format below is the one shape, and the provenance fields the testnet record genuinely needs are
+added **alongside** the ones the readers consume rather than replacing them:
+
 ```json
 {
   "chainId": 84532,
   "network": "base-sepolia",
-  "address": "0x...",
+  "chainName": "Base Sepolia",
+  "rpcUrl": "https://sepolia.base.org",
+  "walletRpcUrl": "https://sepolia.base.org",
+
+  "vault": "0x...",
+  "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  "owner": "0x...",
   "deployBlock": 12345678,
+
   "deployTxHash": "0x...",
   "deployer": "0x...",
-  "owner": "0x...",
-  "asset": {
-    "address": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-    "symbol": "USDC",
-    "decimals": 6
-  },
   "sourceCommit": "<the commit this bytecode was built from>",
   "verifiedAt": "https://repo.sourcify.dev/contracts/full_match/84532/0x.../",
+  "assetSymbol": "USDC",
+  "assetDecimals": 6,
+  "note": "...",
+
   "abi": [ ... ]
 }
 ```
+
+**Which key belongs to which reader** — this is the part that has to stay true, because three programs
+read this file and each one reads a different subset:
+
+| Key | Who reads it | What happens if it is missing or wrong |
+|---|---|---|
+| `chainId` | the console's `loadDeployment()` and `next.config.ts` | the build refuses; the wallet would otherwise be pointed at a chain with no vault on it |
+| `vault` | the console (as an address), the indexer (as the start of its range) | `loadDeployment()` throws, naming the file |
+| `asset` | the console, to label amounts and read decimals | amounts render against the wrong decimals |
+| `deployBlock` | the indexer's start block | **silent in both directions**: before deployment finds no events and reports success, after it misses the early ones |
+| `rpcUrl` / `walletRpcUrl` | the dApp's server and its wallet configuration | the page reads through a proxy; a wallet needs a URL it can reach itself, so these are two different things and are named for their use |
+| `sourceCommit` | a person, later | without it the address is *known* but not *trustworthy*: anyone can read the bytecode, but not which version of the source produced it |
+| `abi` | the sibling dApp, to decode events | see below |
+
+`../scripts/check-deployment-record.mjs` validates all of this — the required keys, plus the on-chain
+facts if an RPC is reachable — and the runbook runs it **between** writing the record and pointing
+anything else at it.
 
 ## Two fields carry more weight than the rest
 
