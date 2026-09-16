@@ -10,11 +10,12 @@ user funds · **Self-written logic:** ~30 lines
 
 ```bash
 forge build
-forge test          # 32 unit tests + 9 invariants
+forge test          # 46 tests: 32 unit, 9 invariants, 13 deployment checks (+12 fork, skipped offline)
 ```
 
 Requires [Foundry](https://getfoundry.sh/). No network access is needed: the two
 dependencies are vendored under `lib/`, and `foundry.toml` pins a compiler path.
+The fork tests against real USDC need an RPC endpoint and skip without one.
 
 ---
 
@@ -22,14 +23,18 @@ dependencies are vendored under `lib/`, and `foundry.toml` pins a compiler path.
 
 A minimal, correct implementation of ERC-4626 whose value is not the feature set
 but the evidence around it: invariant tests that a mutation can break, a static
-analysis report, and a written record of what was measured rather than assumed.
+analysis report, two independent fuzzers, and a written record of what was
+measured rather than assumed.
 
 - `src/YieldVault.sol` — the whole contract
+- `src/DeployValidation.sol` — the deploy-time checks, extracted so they are testable
+- `script/Deploy.s.sol` — the deployment script, verified against a local chain
 - `test/YieldVault.t.sol` — 32 unit and fuzz tests
 - `test/YieldVault.invariants.t.sol` — the stateful handler and 9 invariants
+- `test/DeployScript.t.sol` — 13 tests of the deployment script's checks
+- `test/YieldVaultFork.t.sol` — 12 tests against the **real** USDC contract
 - `REQUIREMENTS.md` — scope, acceptance criteria, and where it deviates from plan
-- `ARCHITECTURE.md` — decisions with their rejected alternatives, the maths, and
-  the invariants
+- `ARCHITECTURE.md` — decisions with their rejected alternatives, the maths, and the invariants
 - `TESTING.md` — how to reproduce every claim below
 
 ---
@@ -67,11 +72,14 @@ argued in full in `ARCHITECTURE.md`.
 ## Verified behaviour
 
 ```
-forge test                    32 unit tests, 9 invariants — all pass
+forge test                    46 passed, 0 failed, 12 skipped
+                              (32 unit + 9 invariants + 13 deployment checks)
 forge test --match-contract YieldVaultInvariantTest
                               256 runs x depth 64, 16,384 calls, 0 reverts
-slither .                     102 detectors, 17 contracts, 0 results
-medusa fuzz                   9 properties, ~1.1M calls, 0 failures
+forge test --match-contract YieldVaultForkTest   (needs an RPC endpoint)
+                              12 passed against the REAL mainnet USDC contract
+slither .                     102 detectors, 18 contracts, 0 results
+medusa fuzz                   9 properties, ~1M calls, 0 failures
 ```
 
 **The invariant suite was checked for teeth, not just for green.** Reversing one
@@ -85,16 +93,24 @@ a vault with the decimal offset and asserts the victim keeps their value; anothe
 performs the same attack against a vault with no offset and asserts that the
 victim *is* wiped out. The difference between the two runs is the protection.
 
+**The real USDC contract is exercised, not mocked.** `test/YieldVaultFork.t.sol`
+forks Ethereum mainnet and moves genuine USDC, because every other test uses a
+mock this repository also wrote — and a mock cannot disagree with the code that
+tests it. An earlier version of that test faked `transferFrom` with
+`vm.mockCall`; it returned `true` without moving anything, so the vault minted
+shares against assets it never received. `TESTING.md` records that, because the
+mistake is more instructive than the fix.
+
 ### What is not verified
 
 - **Not deployed anywhere.** There is no live address and no verified contract.
-  Saying otherwise would be a lie.
-- **No test against the real USDC contract.** The tests use a 6-decimal mock.
-  Running the same assertions against Base Sepolia's actual USDC via a fork is
-  P2 and has not been done.
+  The deployment script runs and has been exercised against a local chain, but it
+  has not been run against a funded account on a public network.
 - **No external audit.** Self-reviewed plus two automated tools.
+- **The fork test says nothing about Base Sepolia.** It forks mainnet because
+  that is where the real USDC implementation lives.
 - **Echidna and Halmos were not run.** Echidna is installed but cannot start in
-  this environment (certificate-store access); Halmos was not attempted.
+  this environment; Halmos was not attempted.
 - **The `reportYield` path cannot be exercised by a stranger.** It is
   `onlyOwner`, so on testnet only the deployer can demonstrate it.
 

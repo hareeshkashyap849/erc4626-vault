@@ -1,11 +1,11 @@
 # Testing — erc4626-vault
 
-How to reproduce every claim in the README, in four levels, and an explicit list
+How to reproduce every claim in the README, in six levels, and an explicit list
 of what is **not** covered.
 
 The point of listing the gaps is that a testing document claiming completeness is
-not useful. Everything below can be run locally with no network access and no
-API keys.
+not useful. Everything except level 5 runs with no network access and no API
+keys.
 
 ---
 
@@ -18,6 +18,9 @@ forge build          # compiles with the pinned solc; needs no network
 forge test
 ```
 
+Expected: **46 passed, 0 failed, 12 skipped**. The skipped ones are the fork
+tests, which need an RPC endpoint; see level 5.
+
 `foundry.toml` sets `solc` to an absolute path inside this workspace's toolchain
 because `solc-select` is broken in this environment (its Python module is
 missing) and letting forge download a compiler would make the build depend on
@@ -26,13 +29,11 @@ such as `"0.8.37"`.
 
 ---
 
-## Level 1 — unit and fuzz tests
+## Level 1 — unit and fuzz tests (32)
 
 ```bash
-forge test
+forge test --match-contract YieldVaultTest
 ```
-
-Expected: **32 passed, 0 failed**, plus the invariant suite below.
 
 The tests check arithmetic against an independent restatement of OpenZeppelin's
 conversion formula (`_expectedShares` / `_expectedAssets` and their ceil
@@ -40,15 +41,13 @@ variants) rather than against the vault's own output. A test that asks the
 contract for an answer and then asserts the contract gave that answer proves
 nothing; these recompute the value and compare.
 
-Covered:
-
-| Area | Tests |
+| Area | What is checked |
 |---|---|
 | Decimal handling | 18 decimals for 6- and 18-decimal assets; construction reverts above 18 |
 | First deposit | receives `assets * 10**offset` shares, so the offset costs the first depositor nothing |
-| Rounding directions | all four previews and both conversions checked against independent floor/ceil implementations |
-| Ceil ≥ floor | 25 samples including values that do not divide evenly |
-| preview == executed | four pairs (deposit/mint/withdraw/redeem) |
+| Rounding directions | all four previews and both conversions against independent floor/ceil implementations |
+| Ceil ≥ floor | 25 samples, including values that do not divide evenly |
+| preview == executed | four pairs (deposit / mint / withdraw / redeem) |
 | `reportYield` | raises share price, mints nothing, emits, rejects zero, rejects non-owner |
 | Owner cannot take | the only owner call moves assets *in*; a full withdrawal still succeeds afterwards |
 | Solvency | total supply never redeemable for more than assets + 1 wei |
@@ -59,8 +58,6 @@ Covered:
 | Third-party spend | withdraw without allowance reverts; with allowance succeeds and consumes it |
 | Share transfer | a transferred share is worth exactly the same claim |
 | Accounting | `totalAssets()` always equals the balance, including after a direct donation |
-
-### Run one test with output
 
 ```bash
 forge test --match-test test_InflationAttackFailsToStealTheNextDepositorsValue -vvv
@@ -74,7 +71,6 @@ A suite that passes is only evidence if it can fail. This deliberately breaks th
 library and confirms the suite notices.
 
 ```bash
-# back up the vendored source
 cp lib/openzeppelin-contracts/contracts/token/ERC20/extensions/ERC4626.sol /tmp/ERC4626.sol.bak
 
 # reverse one rounding direction: convertToAssets Floor -> Ceil
@@ -83,14 +79,12 @@ sed -i 's/return _convertToAssets(shares, Math.Rounding.Floor);/return _convertT
 
 forge test          # expect FAILURES, not a pass
 
-# restore
 cp /tmp/ERC4626.sol.bak lib/openzeppelin-contracts/contracts/token/ERC20/extensions/ERC4626.sol
-forge test          # expect 32 passed again
+forge test          # expect 46 passed again
 ```
 
-Measured result: **3 tests fail**, including
-`test_RoundingDirectionsMatchTheStandard` with
-`previewRedeem floor: 9331000 != 9330999` and
+Measured: **3 tests fail**, including `test_RoundingDirectionsMatchTheStandard`
+with `previewRedeem floor: 9331000 != 9330999` and
 `test_TotalSupplyNeverRedeemableForMoreThanAssetsPlusOneWei` with
 `preview disagrees with the formula: 1821000000 != 1820999999`.
 
@@ -100,7 +94,7 @@ merely mentions them.
 
 ---
 
-## Level 3 — stateful invariants
+## Level 3 — stateful invariants (9)
 
 ```bash
 forge test --match-contract YieldVaultInvariantTest
@@ -111,10 +105,8 @@ seven handler functions and **0 reverts**.
 
 Configuration: 256 runs x depth 64, `fail_on_revert = false`. Reverts are expected
 here — the fuzzer is supposed to try withdrawing more than it holds — so the
-handler asserts its *preconditions* instead of letting them revert. See the
-warning below for why that matters.
-
-The nine invariants:
+handler asserts its *preconditions* instead of letting them revert. See below for
+why that distinction matters.
 
 | # | Property |
 |---|---|
@@ -130,7 +122,7 @@ The nine invariants:
 
 ### Two traps this suite fell into, and what they teach
 
-Both were found by looking at tool output rather than by reading code.
+Both were found by reading tool output rather than by reading code.
 
 **1. Reverts hide unexecuted code.** The first version of the handler had no
 allowance for the vault owner, so all ~2,400 `reportYield` calls reverted. With
@@ -150,7 +142,99 @@ thing to suspect.
 
 ---
 
-## Level 4 — independent tools
+## Level 4 — the deployment script (13)
+
+```bash
+forge test --match-contract DeployValidationTest
+```
+
+A deployment script that has only ever been run by hand is untested code with a
+convincing appearance, and its failures are the quiet kind. A vault deployed
+against an 18-decimal asset instead of a 6-decimal one deploys successfully, has
+the right owner, reports `decimals() == 18` as documented, and looks entirely
+healthy on a block explorer — while `_decimalsOffset()` is 0 instead of 12, so
+the inflation-attack cost is silently reduced by a factor of 10¹².
+
+The checks therefore live in `src/DeployValidation.sol` as functions over
+primitives, so they can be unit-tested. Inline `require` statements in
+`Script.run()` cannot be: reaching them means deploying a contract, and
+`vm.startBroadcast` inside a test is a dry run.
+
+Two facts worth recording about writing those tests:
+
+- **A library function must be `public`, not `internal`, to be tested with
+  `vm.expectRevert`.** An `internal` library function is inlined into its caller,
+  so its revert happens at the same call depth as the cheatcode and Foundry
+  reports `call didn't revert at a lower depth than cheatcode call depth`. The
+  visibility here is a testability requirement, not a style choice.
+- **The script has been executed for real**, against a local `anvil` chain, and
+  it deployed a working vault. That is not the same as deploying to Base Sepolia,
+  which needs funds and a key.
+
+### Running the script locally
+
+```bash
+anvil &
+export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80  # anvil key 0
+forge script script/DeployTestAsset.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
+export ASSET_ADDRESS=<the address it printed>
+forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
+```
+
+---
+
+## Level 5 — the real USDC contract (12)
+
+```bash
+MAINNET_RPC_URL=https://ethereum-rpc.publicnode.com \
+  forge test --match-contract YieldVaultForkTest
+```
+
+Expected: **12 passed**. Takes about two minutes, almost all of it network.
+
+Every other test here uses `MockERC20`, which this repository also wrote. Passing
+those proves the vault works with *our idea of* an ERC-20, not with USDC — and
+USDC is not a plain ERC-20: it is a proxy in front of an upgradeable
+implementation with its own behaviour. **A mock cannot disagree with the code that
+tests it.**
+
+This forks **Ethereum mainnet** and moves **real USDC**. With no fork URL
+configured, all twelve skip, so the rest of the suite still works offline.
+
+Covered: the real token's metadata; the vault built on the real token reporting
+18-decimal shares; that funding genuinely moves the balance; the first deposit;
+all six rounding directions; preview matching execution; solvency; the last
+withdrawer paid in full; a fuzzed no-free-lunch property; the inflation attack
+with a **real** donation and the payout verified in real tokens; the offset
+derived from the real token; and `reportYield` moving real tokens.
+
+### Three things that went wrong here, because the mistakes are the useful part
+
+**1. A mock that lies about a transfer is worse than no test.** The first version
+forked Base Sepolia and used `vm.mockCall` to fake `transferFrom` returning
+`true`. It returned `true` *without moving any balance*, so the vault minted
+shares against assets it never received and the share arithmetic came out wrong.
+The failure looked like a vault bug; it was the test manufacturing confidence.
+`vm.deal` on Base Sepolia's USDC would carry the same defect less obviously — it
+rewrites a balance slot directly, bypassing the token logic the test exists to
+exercise.
+
+**2. Fork mainnet, not the testnet, when the point is the token.** Mainnet USDC is
+reachable, and on a fork `vm.deal` funds an account with the real token in a way
+`balanceOf` actually reports. That also answers a question Base Sepolia could not:
+how the vault behaves against the implementation holding real money. It does
+**not** test anything about Base Sepolia — USDC is the same implementation with
+the same 6 decimals on both chains.
+
+**3. The under-funded attacker, again.** `deal(USDC, attacker, 10_000e6)` then
+`deposit(1)` then `transfer(10_000e6)` fails on the token's own balance check, one
+wei short. The same mistake had already been made in the unit suite. The fix is
+`deal(USDC, attacker, donation + 1)`. A test that fails on arithmetic it controls
+wastes a debugging session on itself.
+
+---
+
+## Level 6 — independent tools
 
 ### Static analysis
 
@@ -158,7 +242,7 @@ thing to suspect.
 slither . --filter-paths "lib/|test/" --exclude-dependencies
 ```
 
-Measured: **17 contracts, 102 detectors, 0 results.**
+Measured: **18 contracts, 102 detectors, 0 results.**
 
 Two notes on getting a clean run:
 
@@ -177,46 +261,45 @@ medusa fuzz --config medusa.json \
   --compilation-target "test/YieldVault.invariants.t.sol" --timeout 300
 ```
 
-Measured: **9 properties PASSED, 0 failed**, approximately 1.1 million calls at
-~13,000 calls/second, 70 corpus entries, 0 failures.
+Measured: **9 properties PASSED, 0 failed**, on the order of a million calls.
 
-Three configuration facts that are not obvious and cost real time to find:
+Four configuration facts that are not obvious and cost real time to find:
 
 1. **`propertyTestPrefixes` must be set.** Medusa does not know Forge's
-   `invariant_` convention. The properties are therefore exposed twice — as
-   `invariant_*` for Forge and `property_*` for Medusa — but both call the same
-   internal `_holds*` function, so the two tools cannot disagree about what a
-   property means.
+   `invariant_` convention. The properties are exposed twice — `invariant_*` for
+   Forge and `property_*` for Medusa — but both call the same internal `_holds*`
+   function, so the two tools cannot disagree about what a property means.
 2. **`property_*` must return `bool`.** A property written with assertions and no
    return value is silently reclassified as an *assertion test*, and Medusa then
-   reports success having checked none of your properties. This is a silent
-   failure mode; check the test summary for "Property Test" lines.
+   reports success having checked none of your properties. Check the summary for
+   "Property Test" lines.
 3. **`--compilation-target` is required.** Without it Medusa passes `.` to
-   crytic-compile, which resolves the Foundry framework and compiles only `src/`
-   — the test contracts are absent from the artifact and no test is discovered.
+   crytic-compile, which resolves the Foundry framework and compiles only `src/`,
+   leaving no test contracts in the artifact.
+4. **The test contract must deploy its handler in the CONSTRUCTOR**, not in
+   `setUp()`. Medusa and Echidna deploy the contract themselves and never call
+   `setUp()`, so a handler built there is the zero address, every property calls
+   into nothing, and all of them fail — which looks like a broken vault rather
+   than a broken harness. A deliberate probe (`property_HandlerIsDeployed`) was
+   what identified it.
 
-Additionally, the test contract must deploy its handler **in the constructor**,
-not in `setUp()`: Medusa and Echidna deploy the contract themselves and never call
-`setUp()`. A handler built in `setUp()` is the zero address under those tools, so
-every property calls into nothing and all of them fail — which looks like a broken
-vault rather than a broken harness. A deliberate probe
-(`property_HandlerIsDeployed`) was what identified it.
-
-The same `property_*` functions work under Echidna, which is not installed
-working in this environment.
+The same `property_*` functions work under Echidna, which is not installed working
+in this environment.
 
 ---
 
 ## What is *not* covered
 
-- **No fork test against real USDC.** The tests use a 6-decimal mock. This is the
-  single largest gap: it means the suite proves the vault works with *this* token,
-  not with USDC. On-chain USDC has behaved non-standardly before. P2 covers it.
-- **Nothing is deployed.** No testnet deployment, no verification, no live
-  address. There is no deployment script yet.
+- **Nothing is deployed.** No Base Sepolia deployment, no Sourcify verification,
+  no live address. The script is verified against a local `anvil` chain, not
+  against a funded account on a public network.
 - **No external audit or review.** Self-review plus two automated tools.
 - **Echidna and Halmos are not part of the evidence.** Echidna cannot start in
   this environment; Halmos was not attempted.
+- **The fork test says nothing about Base Sepolia.** It forks mainnet, because
+  that is where the real USDC implementation lives. The vault is deployed on Base
+  Sepolia, and the two chains share the USDC implementation — but that is an
+  assumption rather than something asserted here.
 - **`reportYield` cannot be demonstrated by a third party** on testnet, since it
   is `onlyOwner`.
 - **No gas optimisation work.** Gas was not measured against any target.

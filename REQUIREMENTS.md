@@ -130,10 +130,11 @@ its offset silently weakened the inflation protection.
 | D4 | Evidence that the tests can fail | Done — the mutation check in `TESTING.md` level 2 |
 | D5 | Static analysis report | Done — slither, 0 results |
 | D6 | A second, independent fuzzer | Done — Medusa, 9 properties, 0 failures |
-| D7 | Deployment to Base Sepolia with verified source | **Not started. This is P2.** |
+| D7 | Deployment to Base Sepolia with verified source | **Script written and exercised against a local chain; the public deployment is not done** — it needs a funded key |
 | D8 | A wallet dApp | **Not started. This is P3.** |
 | D9 | An event indexer, database and query API | **Not started. This is P4.** |
-| D10 | A fork test against the real USDC contract | **Not started.** The largest gap in the current evidence. |
+| D10 | A fork test against the real USDC contract | **Done** (12 tests) — forking mainnet rather than Base Sepolia; see §5 |
+| D11 | Tests for the deployment script itself | **Done** (13) — added because a script only ever run by hand is untested code |
 
 ---
 
@@ -143,7 +144,7 @@ its offset silently weakened the inflation protection.
 |---|---|
 | Reviewer model | An engineer reading the contract in 15 minutes, then asking "how do you know?" |
 | The answer to "how do you know" | Every number in the README is reproducible from `TESTING.md`, and every design decision in `ARCHITECTURE.md` names what it rejected |
-| The weakness a reviewer will find | Nothing is deployed, and the tests use a mock asset rather than real USDC. Both are stated up front rather than discovered. |
+| The weakness a reviewer will find | Nothing is deployed to a public network. Stated up front rather than discovered. |
 
 ---
 
@@ -156,3 +157,5 @@ its offset silently weakened the inflation protection.
 | Invariants stated against a ledger | Invariants stated against observable state | Two ledger-based versions produced failures that were artefacts of the test's own bookkeeping. Recorded in `TESTING.md` because the mistake is more instructive than the fix. |
 | `reportYield` callable by anyone | `onlyOwner` | An open `reportYield` would let any address donate with an event that reads like a protocol action. Donations are still possible, just without the event. |
 | Echidna as a third fuzzer | Medusa | Echidna cannot start in this environment (certificate-store access). Medusa is installed and working, and the same `property_*` functions are compatible with Echidna if it becomes available. |
+| The fork test forks Base Sepolia | It forks **Ethereum mainnet** | Base Sepolia's USDC cannot be funded honestly. `vm.mockCall` was tried and rejected: it returned `true` from `transferFrom` without moving a balance, so the vault minted shares against assets it never received — a mock manufacturing confidence. `vm.deal` on Base Sepolia would rewrite a balance slot directly, bypassing the token logic the test exists to exercise. Mainnet USDC is reachable and can be funded for real, so the test moves genuine tokens. The cost is that it says nothing about Base Sepolia specifically. |
+| Deployment checks as inline `require` statements | Extracted to `src/DeployValidation.sol` | A `require` inside `Script.run()` cannot be unit-tested: reaching it means deploying a contract, and `vm.startBroadcast` in a test is a dry run. The extracted functions are `public` rather than `internal` because an inlined library function reverts at the same call depth as `vm.expectRevert`, which Foundry cannot observe. |

@@ -27,6 +27,11 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
 ]
 
+# Fork testing needs a Base Sepolia endpoint. Run it with:
+#   forge test --match-contract YieldVaultForkTest --fork-url https://sepolia.base.org
+[rpc_endpoints]
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+
 [profile.default.fuzz]
 runs = 512
 
