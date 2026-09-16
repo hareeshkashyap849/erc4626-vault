@@ -572,6 +572,55 @@ async function main() {
 
     shots.push(await browser.screenshot(resolve(SHOTS, '05-second-deposit.png')));
 
+    // ==================================================================
+    // THE USER'S ACTUAL CASE: typing the number their wallet shows.
+    //
+    // A wallet displays fewer decimals than the chain holds. MetaMask showed
+    // "5850" while the chain held 5849.999999, so the amount typed was one base
+    // unit MORE than the balance. The page must refuse it WITHOUT SENDING
+    // ANYTHING -- the earlier shape was approve(5850) (which succeeds, an approval
+    // needs no balance) followed by a reverting deposit: two transactions of gas
+    // to learn the amount was too large.
+    //
+    // The unit test covers the decision; this covers that the page obeys it.
+    // ==================================================================
+    console.log('');
+    console.log('--- typing more than the wallet holds must send NOTHING ---');
+
+    const held = await chainCall(config.asset, SEL.balanceOf + pad(config.owner));
+    const tooMuch = held + 1n; // one base unit over, which is the whole trap
+    const sentBefore = await browser.evaluate(`window.__walletLog.filter((c) => c.method === 'eth_sendTransaction').length`);
+
+    await browser.type('deposit-amount', formatUnits(tooMuch, 6));
+    await browser.click('deposit-button');
+    await new Promise((r) => setTimeout(r, 2500));
+
+    const overspend = await browser.evaluate(`({
+      message: document.getElementById('message').textContent,
+      messageClass: document.getElementById('message').className,
+      sent: window.__walletLog.filter((c) => c.method === 'eth_sendTransaction').length,
+    })`);
+
+    eq('an over-balance deposit sends no transaction at all', overspend.sent, sentBefore);
+    has('...and says the wallet does not hold enough', overspend.message, 'Not enough');
+    check('...without claiming the contract refused it', !/refused/i.test(overspend.message), `message="${overspend.message.slice(0, 80)}"`);
+    check('...and without spending a transaction', !/Gas was still spent/i.test(overspend.message), `message="${overspend.message.slice(0, 80)}"`);
+    check('...in a warning tone, not an error', overspend.messageClass.includes('warn'), `className="${overspend.messageClass}"`);
+
+    // The Max button is the real fix for a human: it fills in the EXACT balance, so
+    // the number on the wallet's screen never has to be retyped here.
+    await browser.click('deposit-max-button');
+    const maxFilled = await browser.evaluate(`document.getElementById('deposit-amount').value`);
+    eq('the Max button fills the exact balance, to the last decimal', maxFilled, formatUnits(held, 6));
+    check('the filled value really is not the round number a wallet shows', maxFilled !== '5850' && maxFilled.includes('.999999'), `value="${maxFilled}"`);
+
+    // And that exact amount is actually accepted, i.e. the boundary is not off by one.
+    await browser.click('deposit-button');
+    await browser.waitFor(`document.getElementById('message').textContent.includes('confirmed') || document.getElementById('message').textContent.includes('refused') || document.getElementById('message').textContent.includes('Not enough')`, { timeoutMs: 25000 });
+    await new Promise((r) => setTimeout(r, 1200));
+    const emptied = await browser.evaluate(`document.getElementById('message').textContent.slice(0, 60)`);
+    has('depositing the exact balance works', emptied, 'confirmed');
+
     // ====================================================== what the console said
     console.log('');
     console.log('--- page diagnostics ---');

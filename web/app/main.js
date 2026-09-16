@@ -405,6 +405,26 @@ function fillMaxRedeem() {
 }
 
 /**
+ * Fill the Deposit box with the exact wallet balance.
+ *
+ * WHY THIS BUTTON EXISTS
+ *
+ * A wallet displays fewer decimals than the chain holds. MetaMask showed a user
+ * "5850" while the chain held 5849.999999, because it rounds to four decimals and
+ * hides the rest. They typed the number on their screen, asked to deposit it, and
+ * were refused -- correctly, since 5850 is one base unit more than they had.
+ *
+ * The page cannot know what a wallet's own UI displays. What it CAN do is offer the
+ * exact figure, so nobody has to retype a number they read off another window. This
+ * is the standard fix for the standard problem, and it also spares the user from
+ * discovering that a vault with reported yield never holds round numbers.
+ */
+function fillMaxDeposit() {
+  el('deposit-amount').value = formatUnits(app.lastState?.walletBalance ?? 0n, app.lastState?.assetDecimals ?? 6);
+  syncControls();
+}
+
+/**
  * Attach the wallet, if there is one.
  *
  * Called at startup AND again if a provider appears later, because MetaMask
@@ -507,6 +527,8 @@ function wireControls() {
   el('approve-button').addEventListener('click', doApprove);
   el('redeem-button').addEventListener('click', doRedeem);
   el('redeem-max-button').addEventListener('click', fillMaxRedeem);
+  // The exact balance, so nobody has to retype a rounded number off their wallet.
+  el('deposit-max-button').addEventListener('click', fillMaxDeposit);
 
   for (const id of ['deposit-amount', 'redeem-amount']) {
     el(id).addEventListener('input', syncControls);
