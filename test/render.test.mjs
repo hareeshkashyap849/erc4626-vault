@@ -250,24 +250,61 @@ test('renderAccount shows the full address and flags not-connected', async () =>
 test('renderChain accepts the expected chain and names the actual one when wrong', async () => {
   const { dom, render } = await loadRender();
 
-  render.renderChain({ chainId: 31337, expectedChainId: 31337, expectedChainName: 'Anvil Local' });
+  render.renderChain({ chainId: 31337, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: true });
   assert.match(dom.elements.get('chain').className, /ok/);
   assert.equal(dom.elements.get('wrong-chain-guard').hidden, true);
 
   // The guard must be VISIBLE on the wrong chain and must name the chain the user
   // is actually on, because "wrong network" alone does not help anyone fix it.
-  render.renderChain({ chainId: 1, expectedChainId: 31337, expectedChainName: 'Anvil Local' });
+  render.renderChain({ chainId: 1, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: true });
   assert.match(dom.elements.get('chain').className, /bad/);
   assert.equal(dom.elements.get('wrong-chain-guard').hidden, false);
   assert.match(dom.elements.get('chain').visibleText, /1/);
   assert.match(dom.elements.get('chain').visibleText, /31337/);
+  // The guard's wording is written by JS, so it can name the target chain.
+  assert.match(dom.elements.get('wrong-chain-detail').visibleText, /31337/);
+  assert.match(dom.elements.get('wrong-chain-detail').visibleText, /Anvil Local/);
 });
 
-test('renderChain treats an unknown chain as bad rather than as fine', async () => {
+/**
+ * @dev The bug that shipped and was seen on the real page.
+ *
+ * An unconnected wallet has no chain, so `chainId` is null. That is NOT the same
+ * as being on the wrong chain, but the first version took the "bad" branch for
+ * null -- which painted the network red AND returned before hiding the guard, so
+ * the static markup in index.html showed a permanent "Wrong network" warning.
+ * The page opened looking broken.
+ */
+test('renderChain does not claim a wrong network when nothing is connected', async () => {
   const { dom, render } = await loadRender();
-  render.renderChain({ chainId: null, expectedChainId: 31337, expectedChainName: 'Anvil Local' });
-  assert.match(dom.elements.get('chain').className, /bad/);
-  assert.equal(dom.elements.get('wrong-chain-guard').hidden, false, 'not knowing the chain is not the same as being on the right one');
+
+  render.renderChain({ chainId: null, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: false });
+
+  assert.equal(dom.elements.get('wrong-chain-guard').hidden, true, 'the wrong-chain guard must stay hidden before connecting');
+  assert.doesNotMatch(dom.elements.get('chain').className, /bad/, 'unknown is not the same as wrong');
+  assert.doesNotMatch(dom.elements.get('chain').visibleText, /wrong/i);
+  assert.match(dom.elements.get('chain').visibleText, /not connected/i);
+});
+
+test('renderChain treats an unknown chain as unknown even when connected', async () => {
+  const { dom, render } = await loadRender();
+
+  // A wallet that reports no chain id at all: we cannot call it wrong, and we
+  // cannot call it right.
+  render.renderChain({ chainId: null, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: true });
+  assert.equal(dom.elements.get('wrong-chain-guard').hidden, true);
+  assert.doesNotMatch(dom.elements.get('chain').className, /bad/);
+});
+
+test('renderChain hides the guard when the wallet moves from wrong to right', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderChain({ chainId: 1, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: true });
+  assert.equal(dom.elements.get('wrong-chain-guard').hidden, false);
+
+  render.renderChain({ chainId: 31337, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: true });
+  assert.equal(dom.elements.get('wrong-chain-guard').hidden, true, 'switching back must clear the guard');
+  assert.match(dom.elements.get('chain').className, /ok/);
 });
 
 /**

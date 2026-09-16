@@ -26,7 +26,10 @@
     </div>
     <div class="wallet-line">
       <span class="label">Network</span>
-      <span id="chain" class="chain">unknown network</span>
+      <!-- Initial text matches what renderChain writes for the not-connected
+           state, so there is no flash of a different (and, before the fix, a
+           scarier) wording while the module loads. -->
+      <span id="chain" class="chain">not connected</span>
     </div>
     <div class="wallet-actions">
       <button id="connect-button" type="button">Connect wallet</button>
@@ -35,12 +38,17 @@
   </div>
 </header>
 
-<!-- Shown only when the wallet is on a chain this deployment is not on. Blocking
-     deposits here rather than letting them revert is the difference between a
-     guard and an error message. -->
+<!-- Shown only when the wallet is CONNECTED to a chain this deployment is not on.
+     Blocking deposits here rather than letting them revert is the difference
+     between a guard and an error message.
+
+     Not shown merely because the wallet is unconnected: "we do not know" and "you
+     are wrong" are different, and rendering the first as the second makes the page
+     look broken before the user has done anything. `renderChain` owns both the
+     visibility and the wording below, because the wording names the target chain. -->
 <div id="wrong-chain-guard" class="guard" hidden>
   <strong>Wrong network.</strong>
-  <span>Your wallet is on a different chain than this vault is deployed to. Switch networks to continue.</span>
+  <span id="wrong-chain-detail">Switch networks to continue.</span>
   <button id="switch-chain-button" type="button">Switch network</button>
 </div>
 

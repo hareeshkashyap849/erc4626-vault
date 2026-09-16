@@ -145,9 +145,25 @@ function showError(err) {
   }
 }
 
+/**
+ * What the network line and the wrong-chain guard should show.
+ *
+ * One place, so the two call sites cannot disagree about whether an unconnected
+ * wallet counts as "wrong chain". It does not: with no account there is no chain
+ * to be wrong about, and the page must not open in a red error state.
+ */
+function chainView(state) {
+  return {
+    chainId: state.chainId,
+    expectedChainId: app.config.chainId,
+    expectedChainName: app.config.chainName ?? `chain ${app.config.chainId}`,
+    connected: Boolean(state.connected && state.account),
+  };
+}
+
 async function onWalletState(state) {
   renderAccount(state.account);
-  renderChain({ chainId: state.chainId, expectedChainId: app.config.chainId, expectedChainName: app.config.chainName ?? `chain ${app.config.chainId}` });
+  renderChain(chainView(state));
   await refresh({ silent: true });
 }
 
@@ -349,7 +365,10 @@ async function start() {
 
   renderDeployment(app.config);
   renderAccount(null);
-  renderChain({ chainId: null, expectedChainId: app.config.chainId, expectedChainName: app.config.chainName ?? `chain ${app.config.chainId}` });
+  // Nothing is connected yet, so the network is UNKNOWN, not wrong. This is the
+  // first thing a visitor sees; showing the wrong-chain guard here told them the
+  // page was broken before they had done anything.
+  renderChain(chainView({ account: null, chainId: null, connected: false }));
 
   const provider = findProvider();
   if (!provider) {

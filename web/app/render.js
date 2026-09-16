@@ -73,17 +73,47 @@ export function renderAccount(address) {
   node.className = 'account connected';
 }
 
-export function renderChain({ chainId, expectedChainId, expectedChainName }) {
+/**
+ * The network line, and the wrong-chain guard.
+ *
+ * THREE STATES, NOT TWO, and the difference is the whole point:
+ *
+ *   not connected   there is no wallet, or it has not been asked yet. We do not
+ *                   know what chain the user is on, so we cannot call it wrong.
+ *   connected, ok   the wallet is on the chain this deployment is on
+ *   connected, bad  the wallet is somewhere else -- only THIS state shows the guard
+ *
+ * An earlier version collapsed the first state into the third: `chainId === null`
+ * took the "bad" branch, which both painted the network red on a page that had not
+ * been connected yet AND returned before hiding the guard below. Since the guard's
+ * text is static markup in index.html, it stayed on screen permanently. The page
+ * opened looking broken before the user had done anything, which is the worst
+ * possible first impression for a page whose point is error handling.
+ */
+export function renderChain({ chainId, expectedChainId, expectedChainName, connected = true }) {
   const node = el('chain');
-  if (chainId === undefined || chainId === null) {
-    node.textContent = 'unknown network';
-    node.className = 'chain bad';
+  const guard = el('wrong-chain-guard');
+
+  if (!connected || chainId === undefined || chainId === null) {
+    node.textContent = 'not connected';
+    // Deliberately NOT the "bad" class: unknown is not the same as wrong, and
+    // colouring it red teaches the user to ignore red.
+    node.className = 'chain';
+    guard.hidden = true;
     return;
   }
-  const ok = chainId === expectedChainId;
+
+  const ok = Number(chainId) === Number(expectedChainId);
   node.textContent = ok ? `${expectedChainName} (${chainId})` : `wrong network: chain ${chainId}, expected ${expectedChainId}`;
   node.className = ok ? 'chain ok' : 'chain bad';
-  el('wrong-chain-guard').hidden = ok;
+
+  // The guard's wording is set here rather than in index.html so it can name the
+  // network the user is being asked for. Static text could not.
+  if (!ok) {
+    const detail = el('wrong-chain-detail');
+    detail.textContent = `Your wallet is on chain ${chainId}; this vault is deployed on ${expectedChainName} (chain ${expectedChainId}).`;
+  }
+  guard.hidden = ok;
 }
 
 /**
