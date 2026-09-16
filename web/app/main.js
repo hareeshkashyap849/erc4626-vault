@@ -6,7 +6,7 @@
  * `render.js` writes text. This file decides *when* to call them, which is the
  * part that genuinely needs a browser and therefore cannot be unit tested. It is
  * kept as small as it can be for exactly that reason. The click-by-click
- * checklist it is verified against is web/DESIGN.md 搂7.
+ * checklist it is verified against is web/DESIGN.md §7.
  *
  * STARTUP ORDER MATTERS
  *
@@ -136,7 +136,7 @@ function renderLiveNow() {
  * five-second read could therefore never fire: it was starved by its own countdown.
  *
  * The symptom was as confusing as it sounds. The indicator ticked "next in 5s",
- * "next in 4s"鈥?and the figures never moved, while pressing Live caught up at once
+ * "next in 4s" — and the figures never moved, while pressing Live caught up at once
  * (because that path reads directly instead of waiting for the timer). A page that
  * reports it is about to refresh, for ever, is worse than one that says it is idle.
  */
@@ -406,7 +406,7 @@ async function connect() {
         tone: 'warn',
         title: 'No browser wallet found',
         detail:
-          'MetaMask injects itself into the page, so it may take a moment after install or enable. This page checks for it automatically 鈥?press Connect wallet again in a few seconds. If it never appears, check that the extension is enabled for this site, then reload.',
+          'MetaMask injects itself into the page, so it may take a moment after install or enable. This page checks for it automatically — press Connect wallet again in a few seconds. If it never appears, check that the extension is enabled for this site, then reload.',
       });
       return;
     }
@@ -531,7 +531,7 @@ async function doDeposit() {
         if (stage === 'plan') {
           setBusy(true, info.step === 'approve' ? 'waiting for the approval prompt' : 'waiting for the deposit prompt');
         } else if (stage === 'approved') {
-          setBusy(true, 'approved 鈥?waiting for the deposit prompt');
+          setBusy(true, 'approved — waiting for the deposit prompt');
         } else {
           setBusy(true, `${stage}${info.stage ? ` ${info.stage}` : ''}${info.hash ? ` ${info.hash}` : ''}`);
         }
@@ -799,7 +799,7 @@ async function start() {
     renderMessage({
       tone: 'warn',
       title: 'No browser wallet detected yet',
-      detail: 'The vault totals below are real reads from the chain, so they work without a wallet. If you have just installed MetaMask, this page will notice it on its own in a moment 鈥?or press Connect wallet.',
+      detail: 'The vault totals below are real reads from the chain, so they work without a wallet. If you have just installed MetaMask, this page will notice it on its own in a moment — or press Connect wallet.',
     });
     setText('control-hint', 'deposit and redeem need a browser wallet; the vault figures above do not');
     // Watches for MetaMask appearing, so someone who installs it while this page
@@ -898,21 +898,23 @@ function renderChartInto(view) {
  *     loads and draws in a real browser.
  *   - The mechanism is UNKNOWN. It is written down here rather than guessed at.
  *
- * So the harness turns the panel off and every other assertion keeps running. Leaving
+ * So the test harness turns the panel off and every other assertion keeps running. Leaving
  * the suite hanging instead would cost the 42 tests that do work, which is a far worse
  * trade than one panel not being exercised through `main.js`.
  *
  * A test sets it on the vm context before `start()` runs:
  *
- *     sandbox.__DSH_DISABLE_CHART__ = true;
+ *     sandbox.__DISABLE_LIVE_CHART__ = true;
  *
- * Read at START, not at module load, so setting it before `start()` is enough.
+ * Read at START, not at module load, so setting it before `start()` is enough. The name
+ * says "live" because it disables only the polling panel: the chart module itself keeps
+ * its own 34-test suite in `web/test/chart.test.mjs`, which does not go through this file.
  *
  * TODO(known limitation): find the hang, fix it, delete this. Recorded in
  * web/DESIGN.md's known limitations so it is not rediscovered from scratch.
  */
 function chartEnabled() {
-  return globalThis.__DSH_DISABLE_CHART__ !== true;
+  return globalThis.__DISABLE_LIVE_CHART__ !== true;
 }
 
 /**

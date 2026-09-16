@@ -151,7 +151,7 @@ complete. That is a state machine with three states, not a boolean.
   34 tests, `/api/candles` reconciles against an independent recomputation of the
   database, and the page loads and draws in a real browser. The mechanism is unknown and
   is written down rather than guessed at. The harness sets
-  `__DSH_DISABLE_CHART__ = true`; when the hang is found, that switch and this bullet
+  `__DISABLE_LIVE_CHART__ = true`; when the hang is found, that switch and this bullet
   both go.
 - **The chart needs the index service, which is a separate repository.** The vault can
   be perfectly healthy while the panel says "not reachable". That is by design and the

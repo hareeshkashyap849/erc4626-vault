@@ -3,6 +3,11 @@ out/
 cache/
 broadcast/
 
+# The compiler that `foundry.toml` points at, copied here by the setup scripts.
+# A 9 MB binary does not belong in the repository, and a clone without it still builds:
+# Foundry falls back to resolving `solc_version` itself.
+.solc/
+
 # Dependencies are vendored deliberately (the sandbox cannot run `forge install`,
 # which shells out to git submodule). Keeping them in the repository makes the
 # build reproducible with no network access, so they are NOT ignored.

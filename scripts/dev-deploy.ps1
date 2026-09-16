@@ -25,9 +25,24 @@ $ErrorActionPreference = 'Stop'
 $Force = $args -contains '-Force' -or $args -contains '--force'
 
 $repo = Split-Path $PSScriptRoot -Parent
-$tc = 'D:\1\11111\deepseek\web3-development\web3-development-execute\toolchain'
+
+# See dev-chain.ps1 for the path derivation (two levels up to the toolchain) and for why
+# `SOLC_PATH` has to be exported for foundry.toml's `${SOLC_PATH}` to resolve at all.
+$tc = if ($env:WEB3_TOOLCHAIN) { $env:WEB3_TOOLCHAIN } else { Join-Path (Split-Path (Split-Path $repo -Parent) -Parent) 'toolchain' }
+if (-not (Test-Path $tc)) {
+  throw "toolchain not found at $tc. Set WEB3_TOOLCHAIN to point at it."
+}
 $env:PATH = "$tc\foundry;$tc\solc;$tc\pylib\bin;" + $env:PATH
 $env:FOUNDRY_CACHE_PATH = "$tc\forge-cache"
+
+# See dev-chain.ps1: `foundry.toml` points `solc` at `.solc/solc` inside this repository so
+# that the config carries no absolute path, and this is what puts it there.
+$solcSrc = Join-Path $tc 'solc\solc-0.8.37.exe'
+$solcDst = Join-Path $repo '.solc\solc'
+if ((Test-Path $solcSrc) -and -not (Test-Path $solcDst)) {
+  New-Item -ItemType Directory -Force -Path (Split-Path $solcDst) | Out-Null
+  Copy-Item $solcSrc $solcDst -Force
+}
 Set-Location $repo
 
 # See dev-chain.ps1: cast reads http.proxy from the git config, which points at a

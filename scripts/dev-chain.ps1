@@ -34,9 +34,42 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path $PSScriptRoot -Parent
-$tc = 'D:\1\11111\deepseek\web3-development\web3-development-execute\toolchain'
+
+# The toolchain sits beside this repository's PROJECTS directory, so it is found by walking
+# up two levels rather than being written in. The previous absolute path worked on exactly
+# one machine and failed everywhere else with a message about a missing file.
+#
+#   <workspace>/web3-development-execute/projects/erc4626-vault   <- $repo
+#   <workspace>/web3-development-execute/projects                 <- 1 up
+#   <workspace>/web3-development-execute/toolchain                <- 2 up, and here
+#
+# `WEB3_TOOLCHAIN` overrides it, which is what a clone somewhere else would use.
+#
+# `SOLC_PATH` is exported because foundry.toml refers to `${SOLC_PATH}`: Foundry does not
+# substitute an UNSET variable, so without this the build tries to exec a binary literally
+# named `${SOLC_PATH}` and reports it as a missing file. Measured, not assumed.
+$tc = if ($env:WEB3_TOOLCHAIN) { $env:WEB3_TOOLCHAIN } else { Join-Path (Split-Path (Split-Path $repo -Parent) -Parent) 'toolchain' }
+if (-not (Test-Path $tc)) {
+  throw "toolchain not found at $tc. Set WEB3_TOOLCHAIN to point at it."
+}
 $env:PATH = "$tc\foundry;$tc\solc;$tc\pylib\bin;" + $env:PATH
 $env:FOUNDRY_CACHE_PATH = "$tc\forge-cache"
+
+# `foundry.toml` points `solc` at `.solc/solc` INSIDE this repository, so that the config
+# carries no absolute path. This script is what puts the compiler there. Copying 9 MB once
+# is cheaper than the alternative, which was an absolute path in the config that worked on
+# exactly one machine.
+$solcSrc = Join-Path $tc 'solc\solc-0.8.37.exe'
+$solcDst = Join-Path $repo '.solc\solc'
+if (Test-Path $solcSrc) {
+  if (-not (Test-Path $solcDst) -or (Get-Item $solcSrc).Length -ne (Get-Item $solcDst -ErrorAction SilentlyContinue).Length) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $solcDst) | Out-Null
+    Copy-Item $solcSrc $solcDst -Force
+    Write-Host "  placed the compiler at .solc/solc"
+  }
+} else {
+  Write-Host "  no solc at $solcSrc; Foundry will fall back to resolving solc_version 0.8.37"
+}
 
 # forge resolves `script/...` relative to the working directory, and this script
 # is invoked from wherever the caller happens to be. Without this, `forge` looks

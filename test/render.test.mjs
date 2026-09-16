@@ -1169,7 +1169,7 @@ async function loadMain({ ethereum = null, config = null, candles = undefined } 
     // stub route, and it is not a page defect -- see the comment on `chartEnabled`
     // in main.js. The chart has its own suite (web/test/chart.test.mjs, 34 tests)
     // and is verified against the real index service by tools/verify-candles.ts.
-    __DSH_DISABLE_CHART__: true,
+    __DISABLE_LIVE_CHART__: true,
     addEventListener: () => {},
     removeEventListener: () => {},
     // viem's transitive dependencies reach for browser globals at evaluation time

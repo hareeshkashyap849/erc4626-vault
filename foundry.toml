@@ -5,11 +5,28 @@ libs = ["lib"]
 test = "test"
 script = "script"
 
-# Pinned to the exact compiler that ships with this workspace's toolchain.
-# The absolute path is deliberate: `solc-select` is broken in this environment
-# (its Python module is missing), and letting forge download a compiler would
-# make the build depend on network access.
-solc = "D:/1/11111/deepseek/web3-development/web3-development-execute/toolchain/solc/solc-0.8.37.exe"
+# The compiler: version pinned, located RELATIVE to this repository.
+#
+# `.solc/solc` is a directory-local copy that `scripts/dev-chain.ps1` and
+# `scripts/dev-deploy.ps1` create by copying the toolchain's solc-0.8.37. It is gitignored,
+# because a 9 MB compiler binary does not belong in the repository.
+#
+# Why a relative path and not the alternatives -- all three were tried and measured:
+#
+#   solc = "C:/abs/path/solc-0.8.37.exe"   worked here and for nobody else; the failure
+#                                          names a missing FILE, not a missing compiler
+#   solc = "${SOLC_PATH}"                  Foundry does NOT substitute environment variables
+#                                          here: it execs a binary literally named
+#                                          `${SOLC_PATH}` and reports it does not exist
+#   (nothing, rely on PATH)                needs a binary named exactly `solc` on PATH,
+#                                          and this workspace's shim at pylib/bin/solc.exe
+#                                          is broken (a Python solc-select wrapper whose
+#                                          module is missing)
+#
+# A relative path is resolved from the project root, so this works on any machine whose
+# setup script has run, and clones without one fall back to Foundry's own resolution.
+solc_version = "0.8.37"
+solc = ".solc/solc"
 
 optimizer = true
 optimizer_runs = 200
