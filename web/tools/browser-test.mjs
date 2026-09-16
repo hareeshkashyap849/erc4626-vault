@@ -210,6 +210,12 @@ const SEL = {
 };
 const pad = (hex) => String(hex).replace(/^0x/, '').padStart(64, '0');
 
+/**
+ * Remove the display grouping from a figure the page rendered, so it can be
+ * compared against a chain value. The separators are cosmetic; the digits are not.
+ */
+const ungroup = (text) => String(text).replace(/,/g, '');
+
 /** The value shown for `assets` in the page's own formatter. */
 const formatUnits = (value, decimals) => {
   const scale = 10n ** BigInt(decimals);
@@ -337,8 +343,8 @@ async function main() {
     has('the hint names the wallet', noWallet.hint, 'wallet');
 
     // The chain reads must work with no wallet at all, and must match the chain.
-    eq('the vault total assets match the chain (no wallet needed)', noWallet.totalAssets, shown(before.totalAssets));
-    eq('the vault total shares match the chain', noWallet.totalSupply, formatUnits(before.totalSupply, 18));
+    eq('the vault total assets match the chain (no wallet needed)', await browser.evaluate(`document.getElementById('total-assets').dataset.exact`), formatUnits(before.totalAssets, 6));
+    eq('the vault total shares match the chain', await browser.evaluate(`document.getElementById('total-supply').dataset.exact`), formatUnits(before.totalSupply, 18));
     check('a share price is shown', /^\d/.test(noWallet.sharePrice), `sharePrice="${noWallet.sharePrice}"`);
     // The Asset field showed "—" in a real browser while readState held the symbol.
     // Asserting on it here is the regression test for that, and it can only be
@@ -391,7 +397,7 @@ async function main() {
     check('the network line is styled good', connected.chainClass.includes('ok'), `className="${connected.chainClass}"`);
     check('the guard is hidden when connected to the right chain (computed style)', connected.guardDisplay === 'none', `display="${connected.guardDisplay}"`);
     check('...and occupies no space', connected.guardVisible === false);
-    eq('the wallet balance matches the chain', connected.walletBalance, shown(before.ownerBalance));
+    eq('the wallet balance matches the chain', ungroup(await browser.evaluate(`document.getElementById('wallet-balance').dataset.exact`)), formatUnits(before.ownerBalance, 6));
     check('deposit is disabled until an amount is entered', connected.depositDisabled === true, `disabled=${connected.depositDisabled}`);
 
     shots.push(await browser.screenshot(resolve(SHOTS, '02-connected.png')));
@@ -430,8 +436,8 @@ async function main() {
 
     // Deltas against the chain, not absolute numbers typed into this file.
     const deposited = 100n * 10n ** 6n;
-    eq('the vault total assets rose by exactly the deposit', afterDeposit.totalAssets, shown(before.totalAssets + deposited));
-    eq('the wallet balance fell by exactly the deposit', afterDeposit.walletBalance, shown(before.ownerBalance - deposited));
+    eq('the vault total assets rose by exactly the deposit', await browser.evaluate(`document.getElementById('total-assets').dataset.exact`), formatUnits(before.totalAssets + deposited, 6));
+    eq('the wallet balance fell by exactly the deposit', await browser.evaluate(`document.getElementById('wallet-balance').dataset.exact`), formatUnits(before.ownerBalance - deposited, 6));
 
     shots.push(await browser.screenshot(resolve(SHOTS, '03-after-deposit.png')));
 
@@ -518,8 +524,8 @@ async function main() {
     eq('the whole allowance was spent, not replaced', retried.allowance, '0');
     eq(
       'the vault total assets rose by the retried deposit',
-      retried.totalAssets,
-      shown(before.totalAssets + deposited + 50n * 10n ** 6n),
+      await browser.evaluate(`document.getElementById('total-assets').dataset.exact`),
+      formatUnits(before.totalAssets + deposited + 50n * 10n ** 6n, 6),
     );
 
     // ===================================================================
@@ -570,7 +576,7 @@ async function main() {
     has('the larger deposit is confirmed, not refused', big.message, 'confirmed');
     check('...and not styled as an error', big.messageClass.includes('ok'), `className="${big.messageClass}"`);
     eq('the page asked for an approve AND a deposit, in that order', big.since.join(', '), 'approve 150, deposit 150');
-    eq('the vault grew by the larger deposit too', big.totalAssets, shown(before.totalAssets + deposited + 50n * 10n ** 6n + 150n * 10n ** 6n));
+    eq('the vault grew by the larger deposit too', await browser.evaluate(`document.getElementById('total-assets').dataset.exact`), formatUnits(before.totalAssets + deposited + 50n * 10n ** 6n + 150n * 10n ** 6n, 6));
 
     shots.push(await browser.screenshot(resolve(SHOTS, '05-second-deposit.png')));
 
@@ -619,12 +625,27 @@ async function main() {
     // first time and false the next run -- the tail shifts with every deposit, so
     // asserting the digits asserts the run rather than the behaviour. A wallet shows
     // four decimals; the page must offer more.
-    const decimalsShown = (maxFilled.split('.')[1] ?? '').length;
+    check('the Max button fills a value with no thousands separators', !maxFilled.includes(','), `value="${maxFilled}"`);
+    // PRECISION, not a particular tail. A previous version of this check looked for
+    // ".999999", which happened to hold on one run and not the next -- the tail
+    // shifts with every deposit, so pinning digits pins the run rather than the
+    // behaviour. What matters is that the page offers MORE precision than the four
+    // decimals a wallet displays, which is the whole reason this button exists.
+    // The page's figure must be the EXACT balance, and a wallet's is a rounded
+    // display of it. The earlier version of this check asserted the page shows more
+    // DECIMALS than a wallet -- which is not the point and is not even true:
+    // MetaMask renders about six SIGNIFICANT FIGURES, so 5455.199997 becomes
+    // "5455.2" (one decimal) and 5265.0759 becomes "5265.08" (two). Fewer decimals,
+    // still a different number. The property that matters is exactness, not width.
+    const exactBalance = await browser.evaluate(`document.getElementById('wallet-balance').dataset.exact`);
+    eq('the page shows the exact balance, not a rounded display of it', exactBalance, formatUnits(held, 6));
+    const roundedLikeAWallet = Number(exactBalance).toPrecision(6).replace(/0+$/, '').replace(/\.$/, '');
     check(
-      'the filled value carries more decimals than a wallet displays',
-      decimalsShown > 4,
-      `value="${maxFilled}" has ${decimalsShown} decimals, a wallet shows 4`,
+      '...which is a different number from what a wallet would show',
+      roundedLikeAWallet !== exactBalance.replace(/0+$/, '').replace(/\.$/, ''),
+      `page="${exactBalance}" vs a wallet's 6-significant-figure "${roundedLikeAWallet}"`,
     );
+    check('the Max button fills a value with no thousands separators', !maxFilled.includes(','), `value="${maxFilled}"`);
 
     // And that exact amount is actually accepted, i.e. the boundary is not off by one.
     await browser.click('deposit-button');
@@ -652,14 +673,18 @@ async function main() {
     })()`);
 
     check('the redeem Max button fills a decimal number, not raw base units', /^\d+(\.\d+)?$/.test(redeemFill.shown), `value="${redeemFill.shown}"`);
-    eq('...and it matches the share balance shown on the page', redeemFill.shown, redeemFill.sharesText);
+    eq(
+      '...and it matches the share balance shown on the page, exactly',
+      redeemFill.shown,
+      await browser.evaluate(`document.getElementById('share-balance').dataset.exact`),
+    );
     // The real distinction is not length: 18-decimal shares are long either way
     // (5409.090899330578546053 is 23 characters, and so is the wrong answer). It is
     // that the filled value must be the SAME NUMBER as the balance on screen. A raw
     // base-unit count is 1e18 times larger while looking superficially similar,
     // which is what made this survive a reading -- and cost a reverted redemption.
     const filledValue = Number(redeemFill.shown);
-    const balanceShown = Number(redeemFill.sharesText);
+    const balanceShown = Number(await browser.evaluate(`document.getElementById('share-balance').dataset.exact`));
     check(
       '...and the filled value is the same magnitude as the balance, not 1e18 larger',
       Math.abs(filledValue - balanceShown) < 1e-6 * Math.max(1, balanceShown),
@@ -702,6 +727,62 @@ async function main() {
     })`);
     has('the page says it is reading on a timer', liveIndicator.status, 'next in');
     has('...and the indicator is in the live state', liveIndicator.dot, 'live');
+
+    // ==================================================================
+    // THE BATCHER IS ACTUALLY IN USE, and the figures are still right.
+    //
+    // Two things to prove, and the second matters more than the first: batching
+    // that REDUCES requests but pairs answers wrongly would show plausible numbers
+    // attached to the wrong questions, with nothing throwing. So this counts HTTP
+    // requests at the dev server's proxy -- not the wallet's method calls, which say
+    // nothing about how they were transported -- and then re-checks every figure
+    // against the chain.
+    // ==================================================================
+    console.log('');
+    console.log('--- the batcher: one HTTP request per poll, and correct figures ---');
+    {
+      // COUNTED AT THE DEV SERVER, not by patching `window.fetch` in the page.
+      //
+      // Patching fetch was the first attempt and it recorded ZERO requests while
+      // the page was demonstrably polling -- because the page's fetch had already
+      // been captured by the modules it loaded, so reassigning `window.fetch` after
+      // the fact changed nothing. A measurement that silently records nothing is
+      // worse than no measurement: it reported "0 batched requests" for a page that
+      // was batching correctly.
+      //
+      // The dev server sees every request as it arrives, which cannot be bypassed.
+      const before = await fetch(`${PAGE}/api/rpc-stats`).then((r) => r.json()).catch(() => null);
+      check('the dev server exposes request statistics', before !== null, before === null ? 'GET /api/rpc-stats failed' : 'ok');
+
+      // Let it poll for a while.
+      await new Promise((r) => setTimeout(r, 6000));
+      const after = await fetch(`${PAGE}/api/rpc-stats`).then((r) => r.json());
+
+      const window = {
+        http: after.http - (before?.http ?? 0),
+        batched: after.batched - (before?.batched ?? 0),
+        singles: after.singles - (before?.singles ?? 0),
+        calls: after.calls - (before?.calls ?? 0),
+      };
+
+      check('the page is making batched requests', window.batched > 0, `batched=${window.batched} singles=${window.singles} of ${window.http} HTTP requests`);
+      check(
+        '...and the HTTP request count is far below the number of chain calls',
+        window.http > 0 && window.calls / window.http >= 2,
+        `${window.calls} chain calls in ${window.http} HTTP requests (${(window.calls / Math.max(1, window.http)).toFixed(1)} per request)`,
+      );
+
+      // The part that matters: batching must not have corrupted anything.
+      const chainNow = await chainCall(config.vault, SEL.totalAssets);
+      const pageNow = await browser.evaluate(`document.getElementById('total-assets').textContent`);
+      eq('figures are still correct with batching on', await browser.evaluate(`document.getElementById('total-assets').dataset.exact`), formatUnits(chainNow, 6));
+      const chainSupply = await chainCall(config.vault, SEL.totalSupply);
+      eq(
+        '...and the supply is not confused with the assets',
+        await browser.evaluate(`document.getElementById('total-supply').dataset.exact`),
+        formatUnits(chainSupply, 18),
+      );
+    }
 
     // Somebody else -- the seeded holder -- deposits. This does NOT go through the
     // page at all.
@@ -780,25 +861,33 @@ async function main() {
     const stillPaused = await browser.evaluate(`document.getElementById('total-assets').textContent`);
     eq('while paused, the page holds still', stillPaused, whilePaused);
 
-    // Resuming must catch up at once, not after another full interval.
+    // Resuming must catch up promptly rather than waiting out a whole interval.
+    //
+    // The assertion is "the page now agrees with the chain", checked in a loop that
+    // reads the PAGE first and only then the chain. An earlier version read the chain
+    // first and compared a value captured before the page had updated -- and since
+    // this test is itself sending transactions, the chain can move between the two
+    // reads. Reading the page first makes the comparison about the page's freshness
+    // rather than about how fast this loop runs.
     const resumedAt = Date.now();
     await browser.click('live-button');
     let caughtUp = false;
     let ms = null;
-    for (let i = 0; i < 25 && !caughtUp; i++) {
+    for (let i = 0; i < 30 && !caughtUp; i++) {
+      const pageText = await browser.evaluate(`document.getElementById('total-assets').dataset.exact`);
       const live = await chainCall(config.vault, SEL.totalAssets);
-      const text = await browser.evaluate(`document.getElementById('total-assets').textContent`);
-      if (text === `${formatUnits(live, 6)} ${before.symbol}`) {
+      if (pageText === formatUnits(live, 6)) {
         caughtUp = true;
         ms = Date.now() - resumedAt;
       } else {
         await new Promise((r) => setTimeout(r, 150));
       }
     }
-    // Well under the 5s interval: an earlier version only re-armed the timer, so
-    // resuming left stale figures on screen for up to a whole interval -- exactly
-    // when the user had just asked for current ones.
-    check('resuming catches up at once, not after another interval', caughtUp && ms < 3000, `caught up=${caughtUp} after ${ms}ms`);
+    // Comfortably under the 2s interval: the point is that resuming READS, rather
+    // than only re-arming the timer. An earlier version did the latter and left
+    // stale figures on screen for up to a full interval -- at exactly the moment the
+    // user had asked for current ones.
+    check('resuming catches up promptly, not after another interval', caughtUp && ms < 1500, `caught up=${caughtUp} after ${ms}ms`);
 
     // ====================================================== what the console said
     console.log('');

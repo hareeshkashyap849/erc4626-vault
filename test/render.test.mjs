@@ -82,6 +82,21 @@ class StubNode {
     this.listeners = new Map();
 
     /**
+     * `dataset`, like a real element's.
+     *
+     * The page keeps the full-precision figure in `data-exact` while the visible text
+     * is grouped for readability, and the tests assert on the attribute -- so the stub
+     * has to have one. A camelCase assignment must land on the same slot a
+     * dash-separated `setAttribute` would, because that is what a browser does and the
+     * page relies on it: `dataset.exact` and `data-exact` are one thing.
+     */
+    this.dataset = {};
+    this._setData = (name, value) => {
+      const camel = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      this.dataset[camel] = String(value);
+    };
+
+    /**
      * `children`.
      *
      * HONEST LIMITATION: this is a plain array, so unlike a real HTMLCollection it
@@ -149,11 +164,16 @@ class StubNode {
    * the rest of this file already tests them.
    */
   setAttribute(name, value) {
+    if (name.startsWith('data-')) return this._setData(name, value);
     if (!this.attributes) this.attributes = new Map();
     this.attributes.set(name, String(value));
   }
 
   getAttribute(name) {
+    if (name.startsWith('data-')) {
+      const camel = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      return this.dataset[camel] ?? null;
+    }
     return this.attributes?.get(name) ?? null;
   }
 
@@ -367,6 +387,13 @@ test('renderState writes every figure, formatted with the right decimals', async
   assert.equal(text('max-withdraw'), '12.5');
   assert.equal(text('total-assets'), '100 mUSDC');
   assert.equal(text('total-supply'), '100');
+
+  // The exact value is kept in an attribute, because the visible text is grouped for
+  // readability and grouping must never be the step that loses a digit.
+  const exact = (id) => dom.elements.get(id).dataset.exact;
+  assert.equal(exact('wallet-balance'), '87.5');
+  assert.equal(exact('total-assets'), '100');
+  assert.equal(exact('share-balance'), '12.5');
   assert.equal(text('share-price'), '1.000000');
   assert.equal(text('asset-symbol'), 'mUSDC');
 });
@@ -920,6 +947,68 @@ test('renderState says nothing about a share when the vault is empty', async (t)
   assert.equal(dom.elements.get('share-percent').visibleText, '', 'there is no fraction of nothing');
 });
 
+/**
+ * @dev Big figures have to be READABLE without becoming LESS PRECISE.
+ *
+ * A share balance is 2727300000000000000000 base units, which formats to
+ * "2727.300000000000000001" -- exact and hard to scan. Grouping the integer part
+ * makes it "2,727.300000000000000001". A wallet would show "2727.3", and a user who
+ * retypes that gets a deposit refused for being one base unit too large, which is
+ * why the full value stays in `data-exact` either way.
+ */
+test('renderState groups large figures for reading and keeps the exact value', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
+
+  render.renderState(
+    {
+      ...STATE,
+      walletBalance: 5455199997n, // 5,455.199997 -- what a wallet shows as "5455.2"
+      totalAssets: 944800003n, // 944.800003
+      shares: 2727300000000000000000n, // exactly 2,727.3 -- no remainder to hide
+      totalSupply: 768000000000000000000n, // 768
+      shareValue: 2999999990n,
+      maxWithdraw: 2999999990n,
+      allowance: 1234567890n,
+    },
+    { symbol: 'USDC', hasAccount: true },
+  );
+
+  const text = (id) => dom.elements.get(id).visibleText;
+  const exact = (id) => dom.elements.get(id).dataset.exact;
+
+  eq2('the wallet balance is grouped', text('wallet-balance'), '5,455.199997 USDC');
+  eq2('the allowance is grouped', text('allowance'), '1,234.56789');
+  eq2('the vault assets are grouped', text('total-assets'), '944.800003 USDC');
+  // 2727.3 exactly: there is no remainder here, so the page and a wallet agree.
+  // They diverge only when the value really has more precision than the wallet
+  // shows -- which is the case the wallet balance above demonstrates.
+  eq2('the share count is grouped', text('share-balance'), '2,727.3');
+  eq2('total supply is grouped', text('total-supply'), '768');
+
+  // Grouping must be cosmetic only: the exact value is unchanged and available.
+  eq2('the exact wallet balance is kept', exact('wallet-balance'), '5455.199997');
+  eq2('the exact share count is kept', exact('share-balance'), '2727.3');
+  eq2('the exact allowance is kept', exact('allowance'), '1234.56789');
+
+  function eq2(label, actual, expected) {
+    assert.equal(actual, expected, label);
+  }
+});
+
+test('renderState does not group the digits after the decimal point', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
+
+  // A comma inside the fraction would make the number unparseable if anyone ever
+  // copied it back out of the page.
+  render.renderState({ ...STATE, walletBalance: 1234567890123n }, { symbol: 'USDC', hasAccount: true });
+  const shown = dom.elements.get('wallet-balance').visibleText;
+  assert.equal(shown, '1,234,567.890123 USDC');
+  assert.doesNotMatch(shown.split('.')[1].replace(' USDC', ''), /,/, 'no separators in the fraction');
+  assert.equal(dom.elements.get('wallet-balance').dataset.exact, '1234567.890123', 'and the copyable value has none either');
+});
+
 test('renderDeployment shows the full addresses and the block', async (t) => {
   const { dom, render, stopTimers } = await loadRender();
   t.after(stopTimers);
@@ -960,6 +1049,7 @@ test('every function render.js exports is callable with a complete argument', as
   const calls = {
     el: () => render.el('message'),
     setText: () => render.setText('message', 'x'),
+    setFigure: () => render.setFigure('total-assets', '1,234.5', { suffix: 'USDC' }),
     shortenAddress: () => render.shortenAddress('0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'),
     renderState: () => render.renderState(STATE, { symbol: 'mUSDC' }),
     renderAccount: () => render.renderAccount(null),

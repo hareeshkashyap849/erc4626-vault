@@ -34,6 +34,29 @@ const CONFIG_FILE = join(REPO, 'deployments', 'local.json');
 const PORT = Number(process.env.WEB_PORT ?? 5173);
 const RPC_URL = process.env.RPC_URL ?? 'http://127.0.0.1:8545';
 
+/**
+ * Counters for how the page talks to the chain.
+ *
+ * WHAT THIS IS FOR
+ *
+ * "Is the page batching its reads?" is otherwise unanswerable from outside. Patching
+ * `window.fetch` in the page does NOT work: the modules captured the original
+ * reference before any test could replace it, so the patch recorded zero requests
+ * while the page was demonstrably polling -- a measurement that reports nothing
+ * looks exactly like a feature that does nothing.
+ *
+ * The proxy sees every request as it arrives and cannot be bypassed, so the counts
+ * here are the honest answer. Three numbers:
+ *
+ *   http    how many HTTP requests reached the proxy
+ *   batched how many of those were JSON-RPC arrays
+ *   calls   how many individual JSON-RPC calls those carried
+ *
+ * Batching is working when `calls` is much larger than `http`. It is NOT working
+ * when they are equal.
+ */
+const rpcStats = { http: 0, batched: 0, singles: 0, calls: 0 };
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -107,17 +130,34 @@ async function proxyRpc(req, res) {
   }
 
   try {
+    const body = Buffer.concat(chunks).toString('utf8');
+    // Counted before forwarding, so a failure upstream is still counted as an
+    // attempt. A request that never arrives is not evidence about batching.
+    try {
+      const parsed = JSON.parse(body);
+      rpcStats.http += 1;
+      if (Array.isArray(parsed)) {
+        rpcStats.batched += 1;
+        rpcStats.calls += parsed.length;
+      } else {
+        rpcStats.singles += 1;
+        rpcStats.calls += 1;
+      }
+    } catch {
+      // Not JSON. Forwarded anyway; the chain will say what it thinks.
+    }
+
     const upstream = await fetch(RPC_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: Buffer.concat(chunks),
+      body,
     });
-    const body = await upstream.text();
+    const response = await upstream.text();
     res.writeHead(upstream.status, {
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
     });
-    res.end(body);
+    res.end(response);
   } catch (err) {
     // Reported as a failed gateway rather than a crash: the page needs to be
     // able to say "the chain is not running", which is a normal thing for it to
@@ -142,6 +182,13 @@ const server = createServer(async (req, res) => {
 
   if (url === '/api/rpc' && req.method === 'POST') {
     return proxyRpc(req, res);
+  }
+
+  // How the page has been talking to the chain, for the browser tests. Read-only,
+  // local-only, and it exposes nothing but counters.
+  if (url === '/api/rpc-stats' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(rpcStats));
   }
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {

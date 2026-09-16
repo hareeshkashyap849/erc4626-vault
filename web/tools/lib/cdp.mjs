@@ -155,15 +155,15 @@ export async function launchBrowser({ port = 9333, width = 1280, height = 900, e
     }
   });
 
-  const send = (method, params = {}) =>
+  const send = (method, params = {}, { timeoutMs = 15000 } = {}) =>
     new Promise((resolve, reject) => {
       const id = ++nextId;
       const timer = setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
-          reject(new Error(`${method}: timed out after 15s`));
+          reject(new Error(`${method}: timed out after ${timeoutMs}ms`));
         }
-      }, 15000);
+      }, timeoutMs);
       pending.set(id, (msg) => {
         clearTimeout(timer);
         if (msg.error) reject(new Error(`${method}: ${msg.error.message}`));
@@ -189,14 +189,25 @@ export async function launchBrowser({ port = 9333, width = 1280, height = 900, e
 
     send,
 
-    /** Evaluate in the page and return the value. Throws on a page-side throw. */
-    async evaluate(expression) {
-      const result = await send('Runtime.evaluate', {
-        expression,
-        returnByValue: true,
-        awaitPromise: true,
-        userGesture: true,
-      });
+    /**
+     * Evaluate in the page and return the value. Throws on a page-side throw.
+     *
+     * `timeoutMs` is overridable because some probes legitimately run for longer
+     * than the default: measuring a polling loop needs to WATCH it for several
+     * intervals, and a 15s cap turned a 40s measurement into "evaluate timed out",
+     * which reads like the page hanging rather than like a limit in this driver.
+     */
+    async evaluate(expression, { timeoutMs = 15000 } = {}) {
+      const result = await send(
+        'Runtime.evaluate',
+        {
+          expression,
+          returnByValue: true,
+          awaitPromise: true,
+          userGesture: true,
+        },
+        { timeoutMs: timeoutMs + 5000 },
+      );
       if (result.exceptionDetails) {
         throw new Error(`evaluate threw: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text}`);
       }

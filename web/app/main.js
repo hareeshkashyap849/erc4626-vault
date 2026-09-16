@@ -20,6 +20,7 @@
 import * as viem from './viem.js';
 import { Wallet, findProvider, sendAndTrack } from './wallet.js';
 import { ERC20_MIN_ABI, deposit, formatUnits, parseAmount, readState, redeem, toUiError } from './vault.js';
+import { makeBatchedClient } from './rpc-batch.js';
 import {
   clearMessage,
   el,
@@ -96,8 +97,19 @@ async function loadConfig() {
  * interval would otherwise stack up requests, and the countdown shown to the user
  * needs a definite "next read at" anyway.
  */
-const LIVE_INTERVAL_MS = 5_000;
-const COUNTDOWN_TICK_MS = 500;
+/**
+ * How often to look at the chain.
+ *
+ * MATCHED TO THE CHAIN, NOT TO A FEELING. This local chain produces a block every
+ * 2 seconds, so reading faster than that can only ever return the same answer
+ * twice -- and since the whole read is now ONE batched request, doing it at block
+ * rate costs one request per block rather than the nine it used to.
+ *
+ * The countdown ticks four times per second purely so the indicator looks alive.
+ * That tick touches nothing but text.
+ */
+const LIVE_INTERVAL_MS = 2_000;
+const COUNTDOWN_TICK_MS = 250;
 
 const live = {
   enabled: true,
@@ -751,10 +763,13 @@ async function start() {
   }
 
   app.explorerUrl = EXPLORER(app.config.chainId);
-  // Built from the page's own origin, not from config.rpcUrl: the dev server
-  // replaces rpcUrl with the relative "/api/rpc" on purpose, and viem's http()
-  // needs something with an origin to resolve against.
-  app.publicClient = viem.createPublicClient({ transport: viem.http(`${location.origin}/api/rpc`) });
+  // BATCHED, not one request per read. `readState` wants nine values, and viem
+  // issues nine requests for them -- fine at a five-second poll and unacceptable at
+  // a one-second one. The batcher collects everything asked for in the same tick and
+  // sends it as a single JSON-RPC array, so the page can poll at roughly the rate
+  // the chain produces blocks. See web/app/rpc-batch.js for why this rather than
+  // Multicall3.
+  app.publicClient = makeBatchedClient(viem, { rpcUrl: `${location.origin}/api/rpc` });
 
   renderDeployment(app.config);
   renderAccount(null);

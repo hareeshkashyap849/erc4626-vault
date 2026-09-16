@@ -21,6 +21,47 @@ export function el(id) {
   return found;
 }
 
+/**
+ * Write a figure, with the exact value kept alongside it.
+ *
+ * TWO THINGS ARE TRUE AT ONCE ABOUT BIG NUMBERS ON THIS PAGE:
+ *
+ *   a share balance is 2727300000000000000000 base units, which formats to
+ *   "2727.300000000000000001" -- precise, and unreadable
+ *
+ *   a wallet shows the SAME balance as "2727.3", because it rounds to about six
+ *   significant figures, and a user who retypes that number gets a deposit that is
+ *   refused for being one base unit too large
+ *
+ * So neither display is sufficient alone. This writes a grouped, easier-to-scan
+ * figure (`5,455.199997`) and puts the full-precision string in `data-exact`, which
+ * a hover reveals and which the browser tests assert against. Nothing is rounded
+ * away: the exact value is always present, one attribute away.
+ */
+export function setFigure(id, value, { suffix = '', exact = null } = {}) {
+  const node = el(id);
+  const precise = exact ?? value;
+  node.textContent = `${group(value)}${suffix ? ` ${suffix}` : ''}`;
+  node.dataset.exact = precise;
+  node.title = suffix ? `${precise} ${suffix}` : precise;
+}
+
+/**
+ * Insert thousands separators into the integer part only.
+ *
+ * Deliberately string manipulation rather than `toLocaleString`: the value arrives
+ * as a decimal string from `formatUnits`, and converting it to a Number would
+ * destroy the precision that the whole page is careful about. A grouped display is
+ * cosmetic; it must not be the step that loses a digit.
+ */
+function group(text) {
+  const [whole, fraction] = String(text).split('.');
+  const sign = whole.startsWith('-') ? '-' : '';
+  const digits = sign ? whole.slice(1) : whole;
+  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return fraction === undefined ? `${sign}${grouped}` : `${sign}${grouped}.${fraction}`;
+}
+
 export function setText(id, text) {
   el(id).textContent = text;
 }
@@ -50,13 +91,13 @@ export function renderState(state, { symbol = undefined, decimals = undefined, s
   const assetSymbol = symbol ?? state.symbol ?? '';
 
   setText('asset-symbol', assetSymbol || '—');
-  setText('wallet-balance', `${formatUnits(state.walletBalance ?? 0n, assetDecimals)} ${assetSymbol}`.trim());
-  setText('allowance', formatUnits(state.allowance ?? 0n, assetDecimals));
-  setText('share-balance', formatUnits(state.shares ?? 0n, shareDecimals));
-  setText('share-value', formatUnits(state.shareValue ?? 0n, assetDecimals));
-  setText('max-withdraw', formatUnits(state.maxWithdraw ?? 0n, assetDecimals));
-  setText('total-assets', `${formatUnits(state.totalAssets ?? 0n, assetDecimals)} ${assetSymbol}`.trim());
-  setText('total-supply', formatUnits(state.totalSupply ?? 0n, shareDecimals));
+  setFigure('wallet-balance', formatUnits(state.walletBalance ?? 0n, assetDecimals), { suffix: assetSymbol });
+  setFigure('allowance', formatUnits(state.allowance ?? 0n, assetDecimals));
+  setFigure('share-balance', formatUnits(state.shares ?? 0n, shareDecimals));
+  setFigure('share-value', formatUnits(state.shareValue ?? 0n, assetDecimals));
+  setFigure('max-withdraw', formatUnits(state.maxWithdraw ?? 0n, assetDecimals));
+  setFigure('total-assets', formatUnits(state.totalAssets ?? 0n, assetDecimals), { suffix: assetSymbol });
+  setFigure('total-supply', formatUnits(state.totalSupply ?? 0n, shareDecimals));
 
   /**
    * Say out loud what fraction of the vault the user owns.

@@ -161,22 +161,31 @@ try {
   // so the timer runs and the reads happen. Ask the PAGE what it got.
   // ==========================================================================
   console.log('');
-  console.log('--- what the page actually reads ---');
-  const reads = await browser.evaluate(`(async () => {
-    const before = document.getElementById('total-assets').textContent;
-    const calls = window.__walletLog.filter((c) => c.method === 'eth_call').length;
-    await new Promise((r) => setTimeout(r, 12000));
-    const after = window.__walletLog.filter((c) => c.method === 'eth_call').length;
-    return {
-      totalAssetsBefore: before,
-      totalAssetsAfter: document.getElementById('total-assets').textContent,
-      callsBefore: calls,
-      callsAfter: after,
-      lastReadStatus: document.getElementById('live-status').textContent,
-      message: document.getElementById('message').textContent.slice(0, 120),
-    };
-  })()`);
-  console.log(JSON.stringify(reads, null, 2).split('\n').map((l) => '  ' + l).join('\n'));
+  console.log('--- 40s UNTOUCHED: does the read timer actually fire while you watch? ---');
+  const watch = await browser.evaluate(`(async () => {
+    const samples = [];
+    const t0 = Date.now();
+    while (Date.now() - t0 < 40000) {
+      samples.push({
+        ms: Date.now() - t0,
+        totalAssets: document.getElementById('total-assets').textContent,
+        status: document.getElementById('live-status').textContent,
+        calls: window.__walletLog.filter((c) => c.method === 'eth_call').length,
+        hidden: document.hidden,
+      });
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    return samples;
+  })()`, { timeoutMs: 60000 });
+  console.log('  ms      chain reads  totalAssets  indicator');
+  for (const s of watch) {
+    console.log(`  ${String(s.ms).padStart(6)}  ${String(s.calls).padStart(11)}  ${s.totalAssets.padEnd(20)} ${s.status}${s.hidden ? '  [HIDDEN]' : ''}`);
+  }
+  const reads = watch.map((s) => s.calls);
+  const grew = reads[reads.length - 1] - reads[0];
+  console.log('');
+  console.log(`  chain reads during 40s: ${grew}  (expected ~8 per 5s tick x 8 ticks = ~64)`);
+  console.log(`  the page is ${(await browser.evaluate('document.hidden')) ? 'HIDDEN' : 'VISIBLE'} while this ran`);
 
   console.log('');
   console.log('--- what the fake wallet returns for totalAssets() directly ---');

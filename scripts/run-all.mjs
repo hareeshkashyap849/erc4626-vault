@@ -61,6 +61,14 @@ const CHECKS = [
   { name: 'unit: wallet (EIP-1193 client, failure classes)', file: 'test/wallet.test.mjs' },
   { name: 'unit: vault (approval state machine, share math, parsing)', file: 'test/vault.test.mjs' },
   { name: 'unit: render (DOM, via a strict stub)', file: 'test/render.test.mjs', flags: ['--experimental-vm-modules'] },
+  {
+    // The batcher pairs RPC responses to requests. If it ever pairs them wrongly,
+    // every figure on the page is silently attached to the wrong question and
+    // nothing throws -- so the pairing is tested directly, including with responses
+    // returned out of order, which the JSON-RPC specification permits.
+    name: 'unit: rpc batcher (pairing, partial failure)',
+    file: 'test/rpc-batch.test.mjs',
+  },
   { name: 'integration: deposit/redeem against a fake chain', file: 'test/integration.test.mjs' },
 
   // --- contracts, through forge
