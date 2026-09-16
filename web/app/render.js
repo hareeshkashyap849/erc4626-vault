@@ -201,18 +201,25 @@ export function clearMessage() {
 /**
  * Drive the buttons from the current facts.
  *
- * Disabled-with-a-reason, not disabled-and-silent: a greyed-out button with no
- * explanation is the second most common way a dApp wastes someone's time.
+ * TWO KINDS OF DISABLED, and they need different words.
  *
- * `redeemBlock` is passed in by the caller rather than computed here, because
- * deciding it needs the share price and this file deliberately does no
- * arithmetic of its own. It is the one blocking condition the caller knows and
- * this function cannot.
+ *   BLOCKED   something is missing that the user must supply elsewhere -- a
+ *             wallet, a connection, the right network. Nothing they type helps.
+ *   NOT READY the button is waiting on the input box next to it. The user is one
+ *             keystroke away, and the hint should say which keystroke.
+ *
+ * The first version used one message for both: "enter an amount to deposit" shown
+ * while the amount box was EMPTY. That reads as an instruction to do something the
+ * user has not done, and a real user reasonably concluded the page was unfinished
+ * and the buttons were broken. The empty box is the normal starting state; the page
+ * should describe it, not scold it.
+ *
+ * `hint` from the caller still wins when it has something more specific to say
+ * (for example, that the vault is short of liquidity for a full redemption).
  */
 export function renderControls({ hasWallet = true, connected, correctChain, busy, amountIsValid, sharesToRedeem, hint = null }) {
   // Ordered most-fundamental first, so the hint names the earliest thing that is
-  // missing rather than the last. "Connect a wallet first" is useless advice to
-  // someone who has not installed one.
+  // missing rather than the last.
   const blocked = !hasWallet
     ? 'no browser wallet detected — the vault figures above are still real reads'
     : !connected
@@ -223,8 +230,10 @@ export function renderControls({ hasWallet = true, connected, correctChain, busy
           ? 'a transaction is in progress'
           : null;
 
-  // When blocked, everything is disabled; otherwise each button answers to its
-  // own input. Two separate reasons, so they are not collapsed into one flag.
+  // Only one button can be the one the user is looking at, so the hint describes
+  // whichever input is empty. Deposit is the primary action, so it speaks first.
+  const notReady = !amountIsValid ? 'type an amount in the Deposit box to enable the button' : !sharesToRedeem ? 'type an amount in the Redeem box to enable the button' : null;
+
   el('deposit-button').disabled = blocked !== null || !amountIsValid;
   el('redeem-button').disabled = blocked !== null || !sharesToRedeem;
   // The approve button is a manual override for the automatic first step of a
@@ -232,7 +241,7 @@ export function renderControls({ hasWallet = true, connected, correctChain, busy
   // not because the deposit flow needs it.
   el('approve-button').disabled = blocked !== null || !amountIsValid;
 
-  el('control-hint').textContent = blocked ?? hint ?? (amountIsValid ? '' : 'enter an amount to deposit');
+  el('control-hint').textContent = blocked ?? hint ?? notReady ?? '';
 }
 
 /** One place that decides what the busy state looks like. */
@@ -240,6 +249,33 @@ export function renderBusy(busy, stage = '') {
   const node = el('busy');
   node.hidden = !busy;
   if (busy) node.textContent = stage ? `working: ${stage}` : 'working…';
+}
+
+/**
+ * Say when the figures were last read from the chain.
+ *
+ * WHY THIS IS NOT DECORATION
+ *
+ * Refresh re-reads every figure from the chain and redraws them. When nothing has
+ * changed on chain, the redraw produces identical pixels -- so "the button worked"
+ * and "the button is dead" look exactly the same. A real user pressed Refresh,
+ * saw nothing move, and reasonably concluded the page was unfinished.
+ *
+ * A timestamp is the smallest thing that distinguishes the two, and it is also
+ * true rather than a spinner that lies: the page genuinely did read the chain at
+ * that moment.
+ */
+export function renderLastRead(at = new Date(), { failed = false } = {}) {
+  const node = el('last-read');
+  if (!node) return;
+  if (failed) {
+    // A failed read must not look like a fresh one.
+    node.textContent = 'could not read the chain just now — the figures above may be out of date';
+    node.className = 'last-read stale';
+    return;
+  }
+  node.textContent = `figures read from the chain at ${at.toLocaleTimeString()}`;
+  node.className = 'last-read';
 }
 
 /**

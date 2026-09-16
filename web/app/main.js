@@ -28,6 +28,7 @@ import {
   renderChain,
   renderControls,
   renderDeployment,
+  renderLastRead,
   renderMessage,
   renderState,
   setText,
@@ -76,7 +77,13 @@ async function refresh({ silent = false } = {}) {
     });
     app.lastState = state;
     renderState(state, { stale: false });
+    // Refresh re-reads and redraws; when nothing changed on chain the pixels are
+    // identical, so this line is the only evidence the press did anything.
+    renderLastRead(new Date());
   } catch (err) {
+    // A failed read must never look like a fresh one: the timestamp is replaced by
+    // a warning, so "the chain went away" cannot be mistaken for "nothing changed".
+    renderLastRead(new Date(), { failed: true });
     if (!silent) {
       if (app.lastState) {
         renderState(app.lastState, { stale: true });

@@ -33,8 +33,13 @@
     </div>
     <div class="wallet-actions">
       <button id="connect-button" type="button">Connect wallet</button>
-      <button id="refresh-button" type="button" class="secondary">Refresh</button>
+      <button id="refresh-button" type="button" class="secondary"
+              title="Re-read every figure from the chain. If nothing has changed on chain the numbers will look identical, so the line underneath says when the read happened.">Refresh</button>
     </div>
+    <!-- Proof that Refresh did something. Without this, "read the chain and nothing
+         had changed" is indistinguishable from "the button is dead" -- which is
+         exactly the conclusion a real user drew. -->
+    <p id="last-read" class="last-read"></p>
   </div>
 </header>
 

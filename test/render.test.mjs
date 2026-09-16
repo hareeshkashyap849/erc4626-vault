@@ -639,6 +639,80 @@ test('renderControls defaults hasWallet to true so an old call site still works'
   assert.equal(dom.elements.get('deposit-button').disabled, false);
 });
 
+/**
+ * @dev The wording that made a real user conclude the page was unfinished.
+ *
+ * Connected, nothing typed in the amount box, and the hint read "enter an amount
+ * to deposit" -- which sounds like an instruction to do something they had not
+ * done, rather than a description of the empty box in front of them. They reported
+ * the buttons as broken.
+ *
+ * An empty amount box is the normal RESTING state. The hint has to say what to do
+ * next, not what the user failed to do.
+ */
+test('renderControls describes the empty input instead of scolding the user', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: false, sharesToRedeem: false });
+  const hint = dom.elements.get('control-hint').visibleText;
+
+  assert.doesNotMatch(hint, /^enter an amount to deposit$/, 'an imperative aimed at a user who has done nothing wrong');
+  assert.match(hint, /type an amount/i, `the hint should say what to do next, got "${hint}"`);
+  assert.match(hint, /deposit/i, 'and which box it means');
+  assert.equal(dom.elements.get('deposit-button').disabled, true, 'the button is still correctly disabled');
+});
+
+test('renderControls distinguishes BLOCKED from NOT READY', async () => {
+  const { dom, render } = await loadRender();
+
+  // Blocked: nothing the user types will help, so the hint must not mention typing.
+  render.renderControls({ hasWallet: false, connected: false, correctChain: false, busy: false, amountIsValid: false, sharesToRedeem: false });
+  const blockedHint = dom.elements.get('control-hint').visibleText;
+  assert.match(blockedHint, /wallet/i);
+  assert.doesNotMatch(blockedHint, /type an amount/i, 'typing cannot fix a missing wallet');
+
+  render.renderControls({ hasWallet: true, connected: false, correctChain: false, busy: false, amountIsValid: false, sharesToRedeem: false });
+  assert.match(dom.elements.get('control-hint').visibleText, /connect/i);
+
+  render.renderControls({ hasWallet: true, connected: true, correctChain: false, busy: false, amountIsValid: false, sharesToRedeem: false });
+  assert.match(dom.elements.get('control-hint').visibleText, /network/i);
+
+  // Not ready: connected and correct, waiting on the input box.
+  render.renderControls({ hasWallet: true, connected: true, correctChain: true, busy: false, amountIsValid: false, sharesToRedeem: false });
+  assert.match(dom.elements.get('control-hint').visibleText, /type an amount/i);
+
+  // Ready: nothing to say.
+  render.renderControls({ hasWallet: true, connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.equal(dom.elements.get('control-hint').visibleText, '');
+});
+
+test('renderControls points at the Redeem box when only that one is empty', async () => {
+  const { dom, render } = await loadRender();
+  render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: false });
+  const hint = dom.elements.get('control-hint').visibleText;
+  assert.match(hint, /redeem/i, `expected a hint about the Redeem box, got "${hint}"`);
+});
+
+/**
+ * @dev Refresh looked dead because a successful re-read with no chain changes
+ * produces identical pixels. A real user pressed it, saw nothing move, and asked
+ * whether the page was finished.
+ */
+test('renderLastRead proves a refresh happened, and never looks fresh after a failure', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderLastRead(new Date('2026-09-16T10:20:30'));
+  const ok = dom.elements.get('last-read');
+  assert.match(ok.visibleText, /read from the chain at/, `expected a timestamp, got "${ok.visibleText}"`);
+  assert.doesNotMatch(ok.className, /stale/);
+
+  render.renderLastRead(new Date(), { failed: true });
+  const failed = dom.elements.get('last-read');
+  assert.match(failed.visibleText, /could not read/i, 'a failure must say so');
+  assert.match(failed.className, /stale/);
+  assert.doesNotMatch(failed.visibleText, /read from the chain at/, 'a failure must NOT look like a successful read');
+});
+
 test('renderBusy toggles the indicator and does not touch the buttons', async () => {
   const { dom, render } = await loadRender();
 
@@ -714,6 +788,7 @@ test('every function render.js exports is callable with a complete argument', as
     clearMessage: () => render.clearMessage(),
     renderControls: () => render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true }),
     renderBusy: () => render.renderBusy(false),
+    renderLastRead: () => render.renderLastRead(new Date()),
     renderDeployment: () => render.renderDeployment({ chainId: 1 }),
   };
 
