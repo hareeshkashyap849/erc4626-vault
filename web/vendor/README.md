@@ -5,10 +5,18 @@ dependency graph rewritten to local paths.** They are committed on purpose.
 
 ## Why not npm
 
-The npm registry is unreachable from the environment this was built in, so
-`npm install viem` cannot run. And even with a working registry, the browser
-cannot consume a `node_modules` tree: viem's ESM output is a graph of hundreds of
-relative imports, each a separate request, none of which works offline.
+> **CORRECTION (2026-09-16).** This section previously said the npm registry was
+> unreachable. That was wrong: `fetch()` to `registry.npmjs.org` answers HTTP 200
+> directly, and `npm install` works. The earlier failure was `EPERM` from this
+> sandbox refusing the named pipe `npm.cmd` needs when spawned through a shell —
+> a limit on the invocation, not on npm. See `web/DESIGN.md` §1.
+
+`npm install viem` would work. It is still not what this page uses, for a reason
+that has nothing to do with availability: **the browser cannot consume a
+`node_modules` tree.** viem's ESM output is a graph of hundreds of relative imports,
+each a separate request, none of which resolves without a bundler. Adopting npm
+here would mean adopting a build step, and §1 of `web/DESIGN.md` explains why this
+project declines one — a choice, now stated as one.
 
 ## Why not an import map to a CDN
 

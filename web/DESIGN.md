@@ -19,11 +19,27 @@ balance, and withdraw — against a real chain, signing real transactions.
 
 The standard way to write this is Next.js plus wagmi. It is what a production
 team would use, and it is what most reviewers would expect. It is not what is
-here, for two reasons of different kinds.
+here, and the reason is **a choice, not a constraint** — which is a correction.
 
-**A constraint.** The npm registry is unreachable from the environment this was
-built in, so `npm install wagmi` cannot run, and the network to a CDN proved
-intermittent as well. A build pipeline could not be completed or debugged here.
+**CORRECTION (2026-09-16).** This section previously said the npm registry was
+unreachable and that a build pipeline therefore could not be completed here. That
+claim was wrong, and it has since been measured:
+
+```
+fetch() direct to registry.npmjs.org   HTTP 200   (no proxy needed)
+npm view playwright version            1.63.0
+npm install playwright-core            succeeds in ~19s
+```
+
+npm was never unreachable. An earlier attempt failed with `EPERM`, which is this
+sandbox refusing the **named pipe** that `npm.cmd` needs when spawned through a
+shell — a limit on how npm was invoked, not on npm. The working invocation is
+`node E:/nodejs/node_modules/npm/bin/npm-cli.js <args> --cache <inside workspace>`.
+
+So the honest position is: **a build step was possible and was declined.** Recording
+a preference as an environmental impossibility made a reversible decision look
+forced, and would have stopped anyone revisiting it. The judgement below stands on
+its own without the false constraint.
 
 **A judgement.** For a demonstration whose value is "can this person build a
 correct contract integration", a zero-build page has properties a framework
@@ -34,6 +50,12 @@ bundle does not:
 | dependencies to run | ~300 packages | 27 vendored files |
 | what a reviewer must do to read the logic | install, then navigate a framework | open one file |
 | works offline | only after `npm install` | always |
+| what it demonstrates | that a framework was used | the EIP-1193 and ERC-4626 layers underneath it |
+
+The last row is the actual argument. wagmi exists to manage exactly the state this
+page manages by hand, so using it would hide the part being demonstrated. That is a
+reason to decline it **for this project**; it is not a reason to decline it for a
+client project, where the trade is usually the other way.
 
 The cost is real and is stated in §5 rather than hidden.
 
@@ -196,9 +218,9 @@ than no cleanup at all.
 **Sandbox requirement:** Chromium will not start unless it can create mojo IPC
 named pipes. Under a confined sandbox it dies with
 `FATAL platform_channel.cc: Check failed: 拒绝访问 (0x5)`, and **no Chrome flag
-avoids it** — the denial is the OS sandbox, not Chrome's own. So this file is
-deliberately *not* part of `scripts/run-all.mjs`, which must pass in a confined
-shell.
+avoids it** — the denial is the OS sandbox, not Chrome's own. So the browser test is
+deliberately *not* wired into the repository's top-level aggregate test runner, which
+must pass in a confined shell.
 
 ### Two bugs that only a screenshot found
 
