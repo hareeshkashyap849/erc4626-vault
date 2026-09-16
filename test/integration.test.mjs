@@ -28,7 +28,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
 import * as viem from '../web/app/viem.js';
-import { ERC20_MIN_ABI, VAULT_ABI, ApprovalState, deposit, readState, redeem } from '../web/app/vault.js';
+import { ERC20_MIN_ABI, VAULT_ABI, deposit, readState, redeem } from '../web/app/vault.js';
 import { FailureClass } from '../web/app/wallet.js';
 
 const VAULT = '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0';
@@ -294,7 +294,6 @@ test('a first deposit is approve-then-deposit, in that order', async () => {
     asset: ASSET,
     account: ALICE,
     amount: 10n * ONE,
-    approvalState: ApprovalState.IDLE,
     onStage: (stage, info) => stages.push([stage, info?.step ?? info?.stage ?? '']),
   });
 
@@ -315,7 +314,7 @@ test('an exact approval is consumed by the deposit, so the next one must approve
   const chain = makeChain({ balances: { [ALICE]: 100n * ONE } });
   const provider = providerOf(chain);
 
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE, approvalState: ApprovalState.IDLE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE });
   assert.deepEqual(sentNames(chain), ['approve', 'deposit']);
 
   // The approval was for exactly 10 and the deposit spent all of it, so the
@@ -328,7 +327,7 @@ test('an exact approval is consumed by the deposit, so the next one must approve
   // amount themselves with the "Approve only" button.
   assert.equal(chain.allowances[`${ALICE.toLowerCase()}:${VAULT.toLowerCase()}`], 0n, 'the exact approval was fully consumed');
 
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 5n * ONE, approvalState: ApprovalState.IDLE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 5n * ONE });
 
   assert.deepEqual(sentNames(chain), ['approve', 'deposit', 'approve', 'deposit'], 'a consumed approval must be renewed');
   assert.equal(chain.totalAssets, 15n * ONE);
@@ -346,23 +345,88 @@ test('an unlimited approval lets a second deposit reuse it with no new approval'
   // once, to avoid a second wallet prompt on every deposit.
   chain.allowances[`${ALICE.toLowerCase()}:${VAULT.toLowerCase()}`] = 10n ** 30n;
 
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE, approvalState: ApprovalState.IDLE });
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 5n * ONE, approvalState: ApprovalState.IDLE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 5n * ONE });
 
   assert.deepEqual(sentNames(chain), ['deposit', 'deposit'], 'a large standing allowance needs no further approvals');
   assert.equal(chain.totalAssets, 15n * ONE);
 });
 
-test('approvalState APPROVED skips the approval even when the allowance read says otherwise', async () => {
+/**
+ * @dev The user's exact case, twice over: they typed their entire balance and the
+ * deposit failed. A vault with reported yield does not hold round numbers, so the
+ * account read "5850" while holding 5849.999999 -- one base unit short.
+ *
+ * Without this check the sequence is an `approve(5850)` that SUCCEEDS (an approval
+ * needs no balance) followed by a `deposit(5850)` that reverts. The user pays gas
+ * twice to be told the amount was too large.
+ */
+test('a deposit larger than the wallet holds is refused before anything is sent', async () => {
+  const chain = makeChain({ balances: { [ALICE]: 100n * ONE - 1n } }); // one base unit short of 100
+  const provider = providerOf(chain);
+
+  const result = await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 100n * ONE });
+
+  assert.equal(result.status, 'insufficient-balance');
+  assert.equal(result.blockedBy, 'insufficient-balance');
+  assert.equal(result.needed, 100n * ONE);
+  assert.equal(result.held, 100n * ONE - 1n);
+  assert.equal(result.shortfall, 1n, 'the shortfall is one base unit, which is exactly the trap');
+
+  // The whole point: no approval was sent, so no gas was spent discovering this.
+  assert.deepEqual(chain.sent, [], 'nothing at all should have been sent');
+});
+
+test('a deposit of exactly the wallet balance is allowed', async () => {
   const chain = makeChain({ balances: { [ALICE]: 100n * ONE } });
   const provider = providerOf(chain);
 
-  // Approval was granted in an earlier session; the allowance is on chain.
+  const result = await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 100n * ONE });
+
+  assert.equal(result.status, 'success', 'the boundary itself must not be refused');
+  assert.deepEqual(sentNames(chain), ['approve', 'deposit']);
+  assert.equal(chain.balances[ALICE.toLowerCase()], 0n);
+});
+
+/**
+ * @dev THE REGRESSION TEST for the bug a real user hit.
+ *
+ * The page used to remember that an approval had succeeded and skip the approval
+ * step for every later deposit. An approval is consumed by the deposit that uses
+ * it, and only covers the amount it was for, so the next deposit went out with an
+ * allowance of zero and reverted:
+ *
+ *     ERC20InsufficientAllowance(vault, 0, 5850e6)
+ *
+ * Observed on chain: nonce 13 approve(100), 14 deposit(100), 15 deposit(5850) with
+ * NO approve. This walks the same sequence and asserts the approve is sent.
+ */
+test('a larger second deposit still approves, because the first approval was consumed', async () => {
+  const chain = makeChain({ balances: { [ALICE]: 100n * ONE } });
+  const provider = providerOf(chain);
+
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE });
+  assert.equal(chain.allowances[`${ALICE.toLowerCase()}:${VAULT.toLowerCase()}`], 0n, 'the first approval was fully spent');
+
+  const before = chain.sent.length;
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 50n * ONE });
+
+  assert.deepEqual(sentNames(chain).slice(before), ['approve', 'deposit'], 'the second deposit MUST approve again');
+  assert.equal(chain.totalAssets, 60n * ONE);
+});
+
+test('a deposit covered by a standing allowance skips the approval', async () => {
+  const chain = makeChain({ balances: { [ALICE]: 100n * ONE } });
+  const provider = providerOf(chain);
+
+  // An allowance large enough on chain, as if granted in an earlier session. This
+  // is the "do not ask twice" behaviour, and it falls out of READING the allowance
+  // rather than remembering an approval.
   chain.allowances[`${ALICE.toLowerCase()}:${VAULT.toLowerCase()}`] = 10n * ONE;
 
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE, approvalState: ApprovalState.APPROVED });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE });
 
-  assert.deepEqual(sentNames(chain), ['deposit'], 'a known-good approval must not be repeated');
+  assert.deepEqual(sentNames(chain), ['deposit'], 'a sufficient on-chain allowance means one transaction');
 });
 
 test('a deposit that reverts after the approval does not lose the approval', async () => {
@@ -379,7 +443,7 @@ test('a deposit that reverts after the approval does not lose the approval', asy
     if (fn?.name === 'deposit' && ++deposits === 1) chain.failNext = 'ERC4626ExceededMaxDeposit';
   };
 
-  const result = await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE, approvalState: ApprovalState.IDLE });
+  const result = await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE });
 
   // A reverted transaction is reported, not thrown: the transaction DID happen
   // and it cost gas, so it is a result with status 'reverted' rather than an
@@ -394,7 +458,7 @@ test('a deposit that reverts after the approval does not lose the approval', asy
   assert.equal(allowance, 10n * ONE, 'the approval must still be in place after a failed deposit');
 
   const before = chain.sent.length;
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE, approvalState: ApprovalState.IDLE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE });
   assert.deepEqual(sentNames(chain).slice(before), ['deposit'], 'the retry must not re-approve');
   assert.equal(chain.allowances[`${ALICE.toLowerCase()}:${VAULT.toLowerCase()}`], 0n, 'and the retry spent the allowance');
 });
@@ -419,7 +483,7 @@ test('a deposit whose approval is rejected throws rather than reporting success'
   };
 
   await assert.rejects(
-    () => deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE, approvalState: ApprovalState.IDLE }),
+    () => deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE }),
     (err) => {
       assert.equal(err.classified?.class, FailureClass.REJECTED);
       return true;
@@ -441,7 +505,7 @@ test('a rejected approval sends nothing and is classified as a rejection', async
   };
 
   await assert.rejects(
-    () => deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE, approvalState: ApprovalState.IDLE }),
+    () => deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 10n * ONE }),
     (err) => {
       assert.equal(err.classified?.class, FailureClass.REJECTED);
       return true;
@@ -454,7 +518,7 @@ test('redeem sends exactly one transaction and moves the assets back', async () 
   const chain = makeChain({ balances: { [ALICE]: 100n * ONE } });
   const provider = providerOf(chain);
 
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 40n * ONE, approvalState: ApprovalState.IDLE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 40n * ONE });
   const shares = chain.shares[ALICE.toLowerCase()];
   assert.ok(shares > 0n);
 
@@ -470,7 +534,7 @@ test('redeem sends exactly one transaction and moves the assets back', async () 
 test('readState returns figures that agree with the chain, and with each other', async () => {
   const chain = makeChain({ balances: { [ALICE]: 100n * ONE } });
   const provider = providerOf(chain);
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 25n * ONE, approvalState: ApprovalState.IDLE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 25n * ONE });
 
   const state = await readState(viem, { publicClient: publicClientOf(chain), vault: VAULT, asset: ASSET, account: ALICE });
 
@@ -509,7 +573,7 @@ test('readState returns figures that agree with the chain, and with each other',
 test('readState with no account still reads the vault totals', async () => {
   const chain = makeChain({ balances: { [ALICE]: 100n * ONE } });
   const provider = providerOf(chain);
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 30n * ONE, approvalState: ApprovalState.IDLE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 30n * ONE });
 
   // This is the no-wallet case: the totals do not depend on who is asking.
   const state = await readState(viem, { publicClient: publicClientOf(chain), vault: VAULT, asset: ASSET, account: null });
@@ -526,7 +590,7 @@ test('readState with no account still reads the vault totals', async () => {
 test('after a reported yield, one share is worth more than one asset', async () => {
   const chain = makeChain({ balances: { [ALICE]: 100n * ONE } });
   const provider = providerOf(chain);
-  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 100n * ONE, approvalState: ApprovalState.IDLE });
+  await deposit(viem, { provider, vault: VAULT, asset: ASSET, account: ALICE, amount: 100n * ONE });
 
   const shares = chain.shares[ALICE.toLowerCase()];
   const gain = 10n * ONE;

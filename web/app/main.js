@@ -19,7 +19,7 @@
  */
 import * as viem from './viem.js';
 import { Wallet, findProvider, sendAndTrack } from './wallet.js';
-import { ApprovalState, ERC20_MIN_ABI, deposit, parseAmount, readState, redeem, toUiError } from './vault.js';
+import { ERC20_MIN_ABI, deposit, formatUnits, parseAmount, readState, redeem, toUiError } from './vault.js';
 import {
   clearMessage,
   el,
@@ -44,9 +44,15 @@ const app = {
   /** The last successful read. Kept so a failed refresh can label itself stale
    *  instead of blanking the page -- blanking looks like "you have nothing". */
   lastState: null,
-  /** The approval half of the state machine. Reset whenever a write fails, so a
-   *  failure never leaves the page believing an approval is in place. */
-  approval: ApprovalState.IDLE,
+  /**
+   * There is deliberately NO remembered approval here.
+   *
+   * This object used to hold one, and it caused a reverted transaction: the page
+   * believed an approval was still in place after the deposit had consumed it, and
+   * sent a deposit with an allowance of zero. Approval state lives on the chain and
+   * is read immediately before each write; a copy of it in the page can only ever
+   * be a stale copy.
+   */
   busy: false,
   explorerUrl: null,
 };
@@ -290,17 +296,9 @@ async function doApprove() {
     setBusy(true, 'approving');
     const data = viem.encodeFunctionData({ abi: ERC20_MIN_ABI, functionName: 'approve', args: [app.config.vault, amount] });
     const result = await sendAndTrack(app.wallet.provider, { to: app.config.asset, data, from: account }, { onStage: (stage, hash) => setBusy(true, `approval ${stage}${hash ? ` ${hash}` : ''}`) });
-    // Only a successful approval moves the state machine. A reverted approve --
-    // an ERC-20 that returns false rather than reverting, for instance -- leaves
-    // the allowance untouched, so claiming otherwise would skip a needed approval.
-    if (reportWrite(result, { okTitle: 'Approval confirmed', okDetail: 'The vault can now move that many tokens.', revertTitle: 'The approval was refused' })) {
-      app.approval = ApprovalState.APPROVED;
-    } else {
-      app.approval = ApprovalState.IDLE;
-    }
+    reportWrite(result, { okTitle: 'Approval confirmed', okDetail: 'The vault can now move that many tokens.', revertTitle: 'The approval was refused' });
     await refresh({ silent: true });
   } catch (err) {
-    app.approval = ApprovalState.IDLE;
     showError(err);
   } finally {
     setBusy(false);
@@ -315,38 +313,55 @@ async function doDeposit() {
     app.wallet.assertChain(app.config.chainId);
     const amount = parseAmount(el('deposit-amount').value, app.lastState?.assetDecimals ?? 6);
     setBusy(true, 'deposit');
+    // No remembered approval is passed in. `deposit()` reads the allowance and
+    // decides from that, because a remembered flag cannot know that an approval was
+    // consumed by the deposit which used it, nor that it covered a smaller amount.
     const result = await deposit(viem, {
       provider: app.wallet.provider,
       vault: app.config.vault,
       asset: app.config.asset,
       account,
       amount,
-      approvalState: app.approval,
       onStage: (stage, info) => {
         if (stage === 'plan') {
-          if (info.step === 'approve') setBusy(true, 'waiting for the approval prompt');
-          else setBusy(true, 'waiting for the deposit prompt');
+          setBusy(true, info.step === 'approve' ? 'waiting for the approval prompt' : 'waiting for the deposit prompt');
         } else if (stage === 'approved') {
-          // The approval landed, so a second deposit must not approve again.
-          app.approval = ApprovalState.APPROVED;
           setBusy(true, 'approved — waiting for the deposit prompt');
         } else {
           setBusy(true, `${stage}${info.stage ? ` ${info.stage}` : ''}${info.hash ? ` ${info.hash}` : ''}`);
         }
       },
     });
-    reportWrite(result, {
-      okTitle: 'Deposit confirmed',
-      okDetail: 'Balances below were re-read from the chain, not from the receipt.',
-      revertTitle: 'The deposit was refused',
-    });
+
+    // The approval step can fail on its own; `deposit()` returns that result rather
+    // than throwing, with `blockedBy` set, so the message can name the step that
+    // stopped instead of blaming the deposit.
+    if (result.blockedBy === 'insufficient-balance') {
+      // Named amounts, because the interesting case is being one base unit short:
+      // a vault with yield in it does not hold round numbers, so an account that
+      // reads "5850" may hold 5849.999999 and a deposit of 5850 cannot work.
+      renderMessage({
+        tone: 'warn',
+        title: 'Not enough tokens',
+        detail:
+          `This deposit needs ${formatUnits(result.needed, app.lastState?.assetDecimals ?? 6)} but the wallet holds ` +
+          `${formatUnits(result.held, app.lastState?.assetDecimals ?? 6)}. Nothing was sent, so no gas was spent.`,
+      });
+    } else if (result.blockedBy === 'approval-not-confirmed') {
+      reportWrite(result, {
+        okTitle: 'Approval confirmed',
+        okDetail: '',
+        revertTitle: 'The approval was refused, so no deposit was sent',
+      });
+    } else {
+      reportWrite(result, {
+        okTitle: 'Deposit confirmed',
+        okDetail: 'Balances below were re-read from the chain, not from the receipt.',
+        revertTitle: 'The deposit was refused',
+      });
+    }
     await refresh({ silent: true });
   } catch (err) {
-    // The approval may well have succeeded before the deposit was refused. The
-    // state machine is only reset for classes where it is genuinely unknown;
-    // otherwise the user is asked to approve twice for no reason.
-    const classified = toUiError(err);
-    if (classified.title !== 'Cancelled') app.approval = ApprovalState.IDLE;
     showError(err);
   } finally {
     setBusy(false);

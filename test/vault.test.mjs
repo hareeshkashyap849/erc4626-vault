@@ -21,7 +21,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import { ApprovalState, MAX_UINT256, allowanceIsSufficient, formatUnits, nextDepositStep, parseAmount, parseUnits, shareMath, toUiError } from '../web/app/vault.js';
+import { MAX_UINT256, allowanceIsSufficient, formatUnits, nextDepositStep, parseAmount, parseUnits, shareMath, toUiError } from '../web/app/vault.js';
 import { FailureClass, USER_REJECTED } from '../web/app/wallet.js';
 
 const USDC = 1_000_000n; // one USDC at 6 decimals
@@ -230,51 +230,64 @@ test('MAX_UINT256 is exactly type(uint256).max', () => {
 // ------------------------------------------------------------ nextDepositStep
 
 test('step: no allowance means approve first', () => {
-  const r = nextDepositStep({ approvalState: ApprovalState.IDLE, allowance: 0n, amount: USDC });
+  const r = nextDepositStep({ allowance: 0n, amount: USDC });
   assert.equal(r.step, 'approve');
+  assert.match(r.reason, /nothing is approved yet/);
 });
 
 test('step: sufficient allowance goes straight to deposit', () => {
-  const r = nextDepositStep({ approvalState: ApprovalState.IDLE, allowance: 5n * USDC, amount: USDC });
+  const r = nextDepositStep({ allowance: 5n * USDC, amount: USDC });
   assert.equal(r.step, 'deposit');
+});
+
+test('step: an allowance that is too small must approve, not try anyway', () => {
+  const r = nextDepositStep({ allowance: USDC, amount: 3n * USDC });
+  assert.equal(r.step, 'approve', 'sending the deposit would revert and cost the user gas to learn nothing');
+  assert.match(r.reason, /lower than this amount/);
 });
 
 /**
- * @dev The state this whole machine exists for. The user approved, the deposit
- *      was then refused (or their wallet rejected it), and they try again. They
- *      must not be shown a second approval prompt.
+ * @dev THE REGRESSION TEST for the bug a real user hit, at the decision layer.
  *
- *      Note that this asserts the decision is made from the STATE and not from a
- *      fresh allowance read. A read taken immediately after an approval can
- *      still show the old value if the approval has not been included yet, and
- *      acting on that read is how a dApp ends up asking twice.
+ * The function used to accept an `approvalState` and short-circuit on it:
+ *
+ *     if (approvalState === APPROVED) return { step: 'deposit', reason: 'already approved' };
+ *
+ * which sent `deposit(5850)` after `approve(100)` had already been consumed, and the
+ * vault reverted with ERC20InsufficientAllowance(vault, 0, 5850e6).
+ *
+ * The parameter is GONE. This test exists to make sure it never comes back: the
+ * allowance is the only input, so there is no way to express "trust me, it is
+ * approved" even by accident.
  */
-test('step: an approval that already succeeded is not repeated, even if the read disagrees', () => {
-  const r = nextDepositStep({ approvalState: ApprovalState.APPROVED, allowance: 0n, amount: USDC });
-  assert.equal(r.step, 'deposit');
-  assert.match(r.reason, /already approved/);
+test('step: the decision is made from the allowance alone, with no remembered approval', () => {
+  // A fresh allowance of zero after a previous deposit spent it: the ONLY correct
+  // answer is to approve again, no matter what the page remembers.
+  assert.equal(nextDepositStep({ allowance: 0n, amount: USDC }).step, 'approve');
+
+  // And this must be true of the function's shape, not just its output. An extra
+  // argument cannot change the answer.
+  assert.equal(nextDepositStep({ allowance: 0n, amount: USDC, approvalState: 'approved' }).step, 'approve', 'a stale flag must not override the chain');
+  assert.equal(nextDepositStep({ allowance: 0n, amount: USDC, approvedEarlier: true }).step, 'approve');
 });
 
 test('step: a zero amount does nothing at all', () => {
-  assert.equal(nextDepositStep({ approvalState: ApprovalState.IDLE, allowance: 0n, amount: 0n }).step, 'none');
+  assert.equal(nextDepositStep({ allowance: 0n, amount: 0n }).step, 'none');
 });
 
 test('step: the full transition, in the order a user goes through it', () => {
   // 1. nothing approved yet
-  assert.equal(nextDepositStep({ approvalState: ApprovalState.IDLE, allowance: 0n, amount: USDC }).step, 'approve');
-  // 2. approval mined; allowance now covers it
-  assert.equal(
-    nextDepositStep({ approvalState: ApprovalState.APPROVED, allowance: USDC, amount: USDC }).step,
-    'deposit',
-  );
-  // 3. a second, larger deposit still needs approval
-  assert.equal(
-    nextDepositStep({ approvalState: ApprovalState.APPROVED, allowance: USDC, amount: 3n * USDC }).step,
-    'deposit',
-    'the session flag sends it straight to deposit; the chain rejects it if the allowance is genuinely short',
-  );
-  // 4. a fresh session with the old allowance still in place needs no approval
-  assert.equal(nextDepositStep({ approvalState: ApprovalState.IDLE, allowance: 3n * USDC, amount: USDC }).step, 'deposit');
+  assert.equal(nextDepositStep({ allowance: 0n, amount: USDC }).step, 'approve');
+  // 2. approval mined for exactly this amount: one transaction from here
+  assert.equal(nextDepositStep({ allowance: USDC, amount: USDC }).step, 'deposit');
+  // 3. the deposit consumed it, so the allowance is back to zero
+  assert.equal(nextDepositStep({ allowance: 0n, amount: USDC }).step, 'approve');
+  // 4. a larger deposit than the standing allowance must approve again. The old
+  //    code sent it straight to deposit "and let the chain reject it", which is a
+  //    valid transaction that costs real gas to discover something already known.
+  assert.equal(nextDepositStep({ allowance: USDC, amount: 3n * USDC }).step, 'approve');
+  // 5. a standing allowance that covers the amount needs no approval
+  assert.equal(nextDepositStep({ allowance: 3n * USDC, amount: USDC }).step, 'deposit');
 });
 
 // ---------------------------------------------------------------- parseAmount

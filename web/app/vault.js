@@ -34,20 +34,19 @@ import { classify, describeFailure, sendAndTrack } from './wallet.js';
  * because they look like a decimal shift.
  */
 
-/**
- * The approval state machine.
+/*
+ * THERE IS NO APPROVAL STATE MACHINE HERE, and that is deliberate.
  *
- *   IDLE        nothing has been attempted
- *   NEEDS_APPROVAL  the allowance is too low; approving is the next step
- *   APPROVED    an approval succeeded and the allowance is now sufficient, but
- *               the deposit has not happened -- the state that must survive a
- *               rejected deposit without asking for a second approval
+ * This file used to export `ApprovalState` (IDLE / NEEDS_APPROVAL / APPROVED) and
+ * the page kept one in memory to avoid asking for a second approval. That memory
+ * was the bug: it claimed an authorisation was still in place after the deposit had
+ * consumed it, so a second deposit went out with an allowance of zero and reverted
+ * with `ERC20InsufficientAllowance(vault, 0, 5850e6)`.
+ *
+ * The state that matters lives on the chain, and `nextDepositStep` reads it
+ * immediately before the write. Deleting the enum rather than leaving it unused is
+ * the point: dead code that models the wrong idea is an invitation to use it again.
  */
-export const ApprovalState = Object.freeze({
-  IDLE: 'idle',
-  NEEDS_APPROVAL: 'needs-approval',
-  APPROVED: 'approved',
-});
 
 export const VAULT_ABI = [
   { type: 'function', name: 'asset', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
@@ -226,21 +225,43 @@ export function allowanceIsSufficient(allowance, amount) {
 }
 
 /**
- * Decide the next step for a deposit, given the current allowance.
+ * Decide the next step for a deposit, given the CURRENT on-chain allowance.
  *
- * Extracted so the three-state logic is testable without a chain, and so the
- * page cannot quietly disagree with it about what "approved" means.
+ * THE ALLOWANCE IS THE ONLY INPUT THAT DECIDES THIS, and that is the whole point.
+ *
+ * An earlier version also took an `approvalState` and short-circuited on it:
+ *
+ *     if (approvalState === APPROVED) return { step: 'deposit', reason: 'already approved in this session' };
+ *
+ * That is wrong twice over, and it cost a real user a reverted transaction:
+ *
+ *   1. An approval is CONSUMED by the deposit that uses it. `approve(100)` then
+ *      `deposit(100)` leaves an allowance of 0 -- so "approved earlier" says
+ *      nothing about whether an approval exists now.
+ *   2. An approval covers the AMOUNT it was for. `approve(100)` does not authorise
+ *      a later `deposit(5850)`.
+ *
+ * The reported symptom was exactly that: deposit 100 (approve + deposit), then
+ * enter 5850 and press Deposit. The page sent `deposit(5850)` with no approval
+ * because it remembered the earlier one, and the vault reverted with
+ * `ERC20InsufficientAllowance(vault, 0, 5850e6)`. The on-chain history shows it
+ * plainly -- nonce 13 approve(100), 14 deposit(100), 15 deposit(5850) with no
+ * approve, status 0.
+ *
+ * The stale-state argument for the short-circuit was that an allowance read might
+ * predate the approval's inclusion. It cannot: this read happens immediately before
+ * the write, and `deposit()` reads again itself. So the short-circuit guarded
+ * against nothing while causing the bug it was meant to prevent.
+ *
+ * "Do not ask for a second approval" is therefore not implemented by remembering
+ * anything. It falls out of reading the chain: after `approve(300)`, the allowance
+ * really is 300, so the next deposit of 50 sees 300 >= 50 and goes straight through
+ * with one prompt. The behaviour is preserved; the memory that broke it is gone.
  */
-export function nextDepositStep({ approvalState, allowance, amount }) {
+export function nextDepositStep({ allowance, amount }) {
   if (amount <= 0n) return { step: 'none', reason: 'amount is zero' };
-  if (approvalState === ApprovalState.APPROVED) {
-    // A previous approval already succeeded. Do not ask again, even if the
-    // allowance read disagrees: the read may predate the approval's inclusion,
-    // and the deposit will revert harmlessly if it really is too low.
-    return { step: 'deposit', reason: 'already approved in this session' };
-  }
-  if (allowanceIsSufficient(allowance, amount)) return { step: 'deposit', reason: 'allowance is already sufficient' };
-  return { step: 'approve', reason: 'allowance is too low' };
+  if (allowanceIsSufficient(allowance, amount)) return { step: 'deposit', reason: 'the allowance already covers this amount' };
+  return { step: 'approve', reason: allowance === 0n ? 'nothing is approved yet' : 'the allowance is lower than this amount' };
 }
 
 /** Parse a user-entered amount into base units, refusing anything unusable. */
@@ -261,12 +282,15 @@ export function parseAmount(input, decimals) {
 }
 
 /**
- * Deposit: at most two transactions, and the state survives a refusal.
+ * Deposit: at most two transactions, decided entirely by the current allowance.
  *
  * The `onStage` callback is what lets the page report which of the two steps is
  * happening, so a user who sees two wallet prompts knows why.
+ *
+ * Note what this does NOT accept: any remembered approval. It reads the allowance
+ * and decides from that, which is the only thing that cannot go stale.
  */
-export async function deposit(viem, { provider, vault, asset, account, amount, approvalState, onStage = () => {} }) {
+export async function deposit(viem, { provider, vault, asset, account, amount, onStage = () => {} }) {
   const state = await readState(viem, {
     publicClient: viem.createPublicClient({ transport: viem.custom(provider) }),
     vault,
@@ -274,12 +298,43 @@ export async function deposit(viem, { provider, vault, asset, account, amount, a
     account,
   });
 
-  const { step, reason } = nextDepositStep({ approvalState, allowance: state.allowance, amount });
+  const { step, reason } = nextDepositStep({ allowance: state.allowance, amount });
   onStage('plan', { step, reason });
+
+  /**
+   * Check the balance BEFORE spending anything.
+   *
+   * A deposit larger than the wallet holds cannot succeed, and the failure has a
+   * particular shape that is worth avoiding: `approve(5850)` SUCCEEDS (an approval
+   * needs no balance), and only then does `deposit(5850)` revert on an insufficient
+   * balance. The user pays gas for a transaction that could not have worked.
+   *
+   * This is easy to hit by accident because a vault with reported yield does not
+   * hold round numbers -- an account displaying "5850" may hold 5849.999999, one
+   * base unit short. Reading the balance first turns a paid revert into a sentence.
+   */
+  if (amount > state.walletBalance) {
+    return {
+      hash: null,
+      status: 'insufficient-balance',
+      stage: 'plan',
+      blockedBy: 'insufficient-balance',
+      needed: amount,
+      held: state.walletBalance,
+      shortfall: amount - state.walletBalance,
+    };
+  }
 
   if (step === 'approve') {
     const data = viem.encodeFunctionData({ abi: ERC20_MIN_ABI, functionName: 'approve', args: [vault, amount] });
-    await sendAndTrack(provider, { to: asset, data, from: account }, { onStage: (s, h) => onStage('approve', { stage: s, hash: h }) });
+    const approved = await sendAndTrack(provider, { to: asset, data, from: account }, { onStage: (s, h) => onStage('approve', { stage: s, hash: h }) });
+
+    // The approval is only worth anything if it actually succeeded, so the deposit
+    // is not attempted when it did not. Sending it anyway produces a second
+    // reverted transaction, and the user pays gas to be told what is already known.
+    if (approved.status !== 'success') {
+      return { ...approved, stage: 'approve', blockedBy: 'approval-not-confirmed' };
+    }
     onStage('approved', {});
   }
 

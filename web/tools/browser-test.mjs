@@ -142,7 +142,6 @@ function fakeWalletSource({ rpcUrl, address, chainId }) {
           await new Promise((r) => setTimeout(r, 120));
           return hash;
         }
-
         default:
           throw Object.assign(new Error('the fake wallet does not implement ' + method), { code: -32601 });
       }
@@ -442,17 +441,18 @@ async function main() {
     // The expectation was the bug, not the page.
     //
     // To exercise the real case the allowance has to EXIST and the deposit has to
-    // be what the user refuses.
+    // be what the user refuses. The standing allowance is deliberately EXACTLY the
+    // amount deposited, so that the attempt consumes all of it -- which is the
+    // precondition the next section needs in order to reproduce the reported bug.
     console.log('');
     console.log('--- failure class 3: approval succeeds, then the deposit is rejected ---');
 
-    // A standing allowance, so the next deposit needs no approval of its own.
-    await browser.type('deposit-amount', '300');
+    await browser.type('deposit-amount', '50');
     await browser.click('approve-button');
     await browser.waitFor(`document.getElementById('message').textContent.includes('Approval confirmed')`, { timeoutMs: 25000 });
     await new Promise((r) => setTimeout(r, 1200));
     const allowed = await browser.evaluate(`document.getElementById('allowance').textContent`);
-    eq('the "Approve only" button grants a standing allowance', allowed, '300');
+    eq('the "Approve only" button grants the allowance', allowed, '50');
 
     const txBeforeReject = await browser.evaluate(`window.__walletLog.filter((c) => c.method === 'eth_sendTransaction').length`);
 
@@ -510,12 +510,67 @@ async function main() {
 
     const txAfterRetry = await browser.evaluate(`window.__walletLog.filter((c) => c.method === 'eth_sendTransaction').length`);
     eq('the retry cost exactly ONE transaction -- no second approval', txAfterRetry - txAfterReject, 1);
-    eq('the standing allowance was spent, not replaced', retried.allowance, '250');
+    // The allowance was exactly the amount deposited, so the retry consumed all of
+    // it. That is the precondition the next section needs: a zero allowance with a
+    // deposit already behind it is precisely the state the reported bug was in.
+    eq('the whole allowance was spent, not replaced', retried.allowance, '0');
     eq(
       'the vault total assets rose by the retried deposit',
       retried.totalAssets,
       shown(before.totalAssets + deposited + 50n * 10n ** 6n),
     );
+
+    // ===================================================================
+    // THE REPORTED BUG, in the exact shape the user hit it.
+    //
+    // Their on-chain history: nonce 13 approve(100), 14 deposit(100), then
+    // 15 deposit(5850) with NO approve -- status 0, reverted with
+    // ERC20InsufficientAllowance(vault, 0, 5850e6). The page remembered the first
+    // approval and skipped the second, after the first had been consumed.
+    //
+    // Everything before this point in the file passed while that bug was live,
+    // because none of it deposited twice with a LARGER amount the second time.
+    // ===================================================================
+    console.log('');
+    console.log('--- the reported bug: deposit 100, then deposit MORE with a spent allowance ---');
+
+    // The allowance is now zero and a deposit is already behind us -- exactly the
+    // state the user's chain was in at nonce 15.
+    const spent = await browser.evaluate(`document.getElementById('allowance').textContent`);
+    eq('precondition: the allowance is zero after the previous deposit', spent, '0');
+
+    await browser.type('deposit-amount', '150');
+    await browser.click('deposit-button');
+    await browser.waitFor(`document.getElementById('message').textContent.includes('confirmed') || document.getElementById('message').textContent.includes('refused')`, { timeoutMs: 25000 });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const big = await browser.evaluate(`(() => {
+      const sends = window.__walletLog.filter((c) => c.method === 'eth_sendTransaction');
+      const word = (data, i) => BigInt('0x' + data.slice(10 + i * 64, 10 + (i + 1) * 64));
+      const label = (c) => {
+        const data = c.params[0].data ?? '0x';
+        const sel = data.slice(0, 10);
+        if (sel === '0x6e553f65') return 'deposit ' + Number(word(data, 0)) / 1e6;
+        if (sel === '0x095ea7b3') return 'approve ' + Number(word(data, 1)) / 1e6;
+        return sel;
+      };
+      return {
+        message: document.getElementById('message').textContent.slice(0, 60),
+        messageClass: document.getElementById('message').className,
+        allowance: document.getElementById('allowance').textContent,
+        totalAssets: document.getElementById('total-assets').textContent,
+        // Only what this step sent. Taking "the last two" instead picked up the
+        // rejected 50 from the previous section and made a correct page look wrong.
+        since: sends.slice(${txAfterRetry}).map(label),
+      };
+    })()`);
+
+    has('the larger deposit is confirmed, not refused', big.message, 'confirmed');
+    check('...and not styled as an error', big.messageClass.includes('ok'), `className="${big.messageClass}"`);
+    eq('the page asked for an approve AND a deposit, in that order', big.since.join(', '), 'approve 150, deposit 150');
+    eq('the vault grew by the larger deposit too', big.totalAssets, shown(before.totalAssets + deposited + 50n * 10n ** 6n + 150n * 10n ** 6n));
+
+    shots.push(await browser.screenshot(resolve(SHOTS, '05-second-deposit.png')));
 
     // ====================================================== what the console said
     console.log('');

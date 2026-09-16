@@ -166,6 +166,51 @@ try {
   console.log(`  last-read after : ${JSON.stringify(afterRefresh)}`);
   console.log(`  changed         : ${beforeRefresh !== afterRefresh}`);
 
+  // ==========================================================================
+  // The reported failure: deposit 100 (approve + deposit), then deposit a LARGER
+  // amount, and see whether the page asks for a second approval.
+  //
+  // The on-chain history shows the page skipped it: approve(100) at nonce 13,
+  // deposit(100) at 14, then deposit(5850) at 15 with NO approve -- and it reverted
+  // with ERC20InsufficientAllowance(vault, 0, 5850e6). The approval state machine
+  // believed an authorisation was still in place after the 100 had consumed it.
+  // ==========================================================================
+  console.log('');
+  console.log('--- REPRODUCING: deposit 100, then deposit a larger amount ---');
+
+  await browser.type('deposit-amount', '100');
+  await browser.click('deposit-button');
+  await browser.waitFor(`document.getElementById('message').textContent.includes('confirmed')`, { timeoutMs: 25000 });
+  await new Promise((r) => setTimeout(r, 1500));
+  console.log(`  after depositing 100: ${JSON.stringify(await browser.evaluate(`document.getElementById('message').textContent.slice(0, 40)`))}`);
+
+  const before = await browser.evaluate('window.__walletLog.length');
+  await browser.type('deposit-amount', '5850');
+  await browser.click('deposit-button');
+  await new Promise((r) => setTimeout(r, 6000));
+
+  const writes = await browser.evaluate(`window.__walletLog.slice(${await browser.evaluate('window.__walletLog.length')} - 6).map((c) => c.method)`);
+  const amountNow = await browser.evaluate(`document.getElementById('deposit-amount').value`);
+  console.log(`  amount box now: ${JSON.stringify(amountNow)}`);
+  console.log(`  message       : ${JSON.stringify(await browser.evaluate(`document.getElementById('message').textContent.slice(0, 90)`))}`);
+
+  // Decode what the page actually sent.
+  const decoded = await browser.evaluate(`(() => {
+    const sends = window.__walletLog.filter((c) => c.method === 'eth_sendTransaction');
+    return sends.map((c) => {
+      const data = c.params[0].data ?? '0x';
+      const sel = data.slice(0, 10);
+      const word = (i) => BigInt('0x' + data.slice(10 + i * 64, 10 + (i + 1) * 64));
+      if (sel === '0x6e553f65') return 'deposit ' + Number(word(0)) / 1e6;
+      if (sel === '0x095ea7b3') return 'approve ' + Number(word(1)) / 1e6;
+      return sel;
+    });
+  })()`);
+  console.log(`  transactions the page asked for, in order:`);
+  for (const d of decoded) console.log(`    ${d}`);
+  void before;
+  void writes;
+
   console.log('');
   console.log('--- wallet calls the page made');
   console.log('  ' + (await browser.evaluate('window.__walletLog.map((c) => c.method).join(", ")')));
