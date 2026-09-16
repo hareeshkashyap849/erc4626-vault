@@ -157,11 +157,13 @@ test/YieldVault.invariants.t.sol  stateful handler + 9 invariants
 test/DeployScript.t.sol         13 checks on the deployment path
 test/YieldVaultFork.t.sol       12 tests against real mainnet USDC
 test/wallet.test.mjs            33 tests: the EIP-1193 client and failure classes
-test/vault.test.mjs             47 tests: approval state machine, share math, parsing
-test/integration.test.mjs       11 tests: deposit/redeem against a fake JSON-RPC chain
-test/render.test.mjs            19 tests: the DOM layer, against a strict stub
+test/vault.test.mjs             48 tests: approval state machine, share math, parsing
+test/integration.test.mjs       14 tests: deposit/redeem against a fake JSON-RPC chain
+test/render.test.mjs            42 tests: the DOM layer, against a strict stub
+test/rpc-batch.test.mjs         11 tests: RPC request/response pairing
+web/test/chart.test.mjs         34 tests: the price chart's scale, empty series, captions
 web/                            the wallet dApp — no build step; see web/DESIGN.md
-  app/  index.html  style.css  vendor/  tools/
+  app/  index.html  style.css  vendor/  tools/  chart.js
 deployments/                    deployment records — see its README
 scripts/run-all.mjs             runs every check above and prints one verdict
 scripts/dev-chain.ps1           local anvil + deploy, offline, state persisted
