@@ -131,6 +131,24 @@
   </section>
 
   <section class="panel">
+    <h2>
+      Share price over time
+      <span class="hint" id="chart-bucket-hint"></span>
+    </h2>
+    <p class="note">
+      Candles come from the index service, which is the only thing that knows what the price
+      <em>was</em> — a node will tell you the totals now, not at every block since deployment.
+      This panel is the one thing on the page that needs that service; everything above reads the
+      chain directly and keeps working without it.
+    </p>
+    <div class="chart-wrap">
+      <svg id="price-chart" class="chart" viewBox="0 0 1000 260" preserveAspectRatio="none"></svg>
+    </div>
+    <p class="chart-caption" id="chart-caption">Loading price history…</p>
+    <p class="note" id="chart-note"></p>
+  </section>
+
+  <section class="panel">
     <h2>This deployment</h2>
     <dl class="figures">
       <div><dt>Vault</dt><dd id="vault-address">—</dd></div>

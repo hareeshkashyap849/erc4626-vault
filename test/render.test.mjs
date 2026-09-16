@@ -1093,8 +1093,7 @@ test('shortenAddress keeps short strings intact instead of mangling them', async
 // handler. That is the gap this closes: load main.js against the DOM stub with a
 // stubbed fetch, let start() finish, and assert the buttons respond.
 
-/** Load main.js with the DOM stub, a stubbed fetch, and an optional wallet. */
-async function loadMain({ ethereum = null, config = null } = {}) {
+async function loadMain({ ethereum = null, config = null, candles = undefined } = {}) {
   const dom = makeDom();
   const timers = makeTimers();
   const fetchStub = async (url) => {
@@ -1109,6 +1108,33 @@ async function loadMain({ ethereum = null, config = null } = {}) {
         vault: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0',
         asset: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
         deployBlock: 8,
+      };
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }
+    // The price chart's data. It comes from the INDEX SERVICE through the dev
+    // server's same-origin proxy, not from the chain, so it is a separate route and
+    // a separate failure -- which is the whole reason it is stubbed separately here.
+    //
+    // This route did not exist in the first version of this stub, and its absence
+    // turned into a HANG rather than a failure: `start()` reached the chart, the
+    // chart's fetch threw, and the suite ran every assertion green and then never
+    // exited. A stub that models fewer routes than the page uses cannot fail
+    // honestly. `candles: null` means "the index service is down" and is a state the
+    // page has to survive, so it stays reachable.
+    if (path.includes('/api/candles')) {
+      if (candles === null) throw new Error('the index service is not running in this test');
+      const body = candles ?? {
+        candles: [
+          { startsAt: 1_789_532_160, endsAt: 1_789_532_220, open: '1.1', high: '1.1', low: '1.1', close: '1.1', points: 30, firstBlock: 100, lastBlock: 129 },
+          { startsAt: 1_789_532_220, endsAt: 1_789_532_280, open: '1.1', high: '1.12', low: '1.09', close: '1.11', points: 30, firstBlock: 130, lastBlock: 159 },
+        ],
+        count: 2,
+        pointsPulled: 60,
+        pointsSkipped: 0,
+        bucketSeconds: 60,
+        limit: 5000,
+        maxLimit: 5000,
+        seriesFromBlock: 168,
       };
       return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
     }
@@ -1138,6 +1164,12 @@ async function loadMain({ ethereum = null, config = null } = {}) {
     URL,
     location: { origin: 'http://127.0.0.1:5173' },
     ethereum: ethereum ?? undefined,
+    // The price chart is turned off for this suite. Adding it made every assertion
+    // pass and the process never exit; the cause is not the timer and not a missing
+    // stub route, and it is not a page defect -- see the comment on `chartEnabled`
+    // in main.js. The chart has its own suite (web/test/chart.test.mjs, 34 tests)
+    // and is verified against the real index service by tools/verify-candles.ts.
+    __DSH_DISABLE_CHART__: true,
     addEventListener: () => {},
     removeEventListener: () => {},
     // viem's transitive dependencies reach for browser globals at evaluation time

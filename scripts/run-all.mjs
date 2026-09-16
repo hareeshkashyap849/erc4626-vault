@@ -69,6 +69,15 @@ const CHECKS = [
     name: 'unit: rpc batcher (pairing, partial failure)',
     file: 'test/rpc-batch.test.mjs',
   },
+  {
+    // The price chart. Its own arithmetic -- the scale, the empty-series guard, the
+    // caption's wording -- is pure and tested here without a browser. The failure this
+    // guards is specific: this vault's price is almost constant, so a naive
+    // `(v - min) / (max - min)` divides by zero, every coordinate becomes NaN, and the
+    // panel draws NOTHING for a perfectly healthy vault while throwing nothing.
+    name: 'unit: chart (scale, empty series, captions)',
+    file: 'web/test/chart.test.mjs',
+  },
   { name: 'integration: deposit/redeem against a fake chain', file: 'test/integration.test.mjs' },
 
   // --- contracts, through forge

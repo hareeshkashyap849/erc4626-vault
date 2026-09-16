@@ -408,3 +408,52 @@ footer {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* ── Price chart ──────────────────────────────────────────────────────────────
+   The SVG carries a fixed viewBox, so the drawing's coordinates do not depend on how
+   wide the panel happens to be. `preserveAspectRatio: none` (set in the HTML) is
+   deliberate: the y axis is a PRICE range, so letterboxing would make the vertical
+   scale depend on the window width, and the same data would look calmer on a wide
+   screen than a narrow one. */
+.chart-wrap {
+  height: 260px;
+  margin: 0.75rem 0 0.5rem;
+  background: rgba(127, 127, 127, 0.07);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Gridlines are present but quiet. They exist so a reader can see the RANGE -- the
+   scale does not start at zero, and a chart with neither gridlines nor a zero
+   baseline is the easiest place to misread a 1% move as a large one. */
+.chart-grid {
+  stroke: currentColor;
+  stroke-opacity: 0.13;
+  stroke-width: 1;
+}
+
+.chart-wick { stroke-width: 1.5; }
+.chart-body { stroke-width: 1; }
+/* Up and down differ by hue AND by fill weight, so the two are not told apart by
+   colour alone -- which also keeps the chart readable in greyscale. */
+.chart-wick.up, .chart-body.up { stroke: #2e9e5b; }
+.chart-body.up { fill: rgba(46, 158, 91, 0.55); }
+.chart-wick.down, .chart-body.down { stroke: #c0392b; }
+.chart-body.down { fill: rgba(192, 57, 43, 0.55); }
+
+.chart-placeholder {
+  fill: currentColor;
+  fill-opacity: 0.55;
+  font-size: 20px;
+}
+
+.chart-caption {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}

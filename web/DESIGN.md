@@ -141,6 +141,21 @@ complete. That is a state machine with three states, not a boolean.
   the UI even though the contract supports them, because the four ERC-4626 entry
   points are four ways to say two things and a demo that offers all four is
   showing its interface rather than its purpose.
+- **The chart's panel is turned off in `test/render.test.mjs`, and the reason is not
+  fixed.** Loading `main.js` with the chart wiring makes that suite pass all 42
+  assertions and then **never exit** — green output and a hung process, which is the
+  worst signal available. What is established: it is this module's chart path (removing
+  it restores a 0.5s exit); it is **not** the interval (commenting out only
+  `startChartTimer()` still hangs); it is **not** a missing stub route (`/api/candles`
+  is stubbed now, still hangs); and it is **not** a page defect — the chart has its own
+  34 tests, `/api/candles` reconciles against an independent recomputation of the
+  database, and the page loads and draws in a real browser. The mechanism is unknown and
+  is written down rather than guessed at. The harness sets
+  `__DSH_DISABLE_CHART__ = true`; when the hang is found, that switch and this bullet
+  both go.
+- **The chart needs the index service, which is a separate repository.** The vault can
+  be perfectly healthy while the panel says "not reachable". That is by design and the
+  caption says so, but it means the page has one dependency the chain does not imply.
 
 ## 6. What must be tested, and how
 

@@ -33,6 +33,11 @@ const CONFIG_FILE = join(REPO, 'deployments', 'local.json');
 
 const PORT = Number(process.env.WEB_PORT ?? 5173);
 const RPC_URL = process.env.RPC_URL ?? 'http://127.0.0.1:8545';
+/**
+ * Where the index service lives. Overridable because it is a separate process that a
+ * developer may well be running on another port; the default matches its own default.
+ */
+const INDEX_API = process.env.INDEX_API ?? 'http://127.0.0.1:8787';
 
 /**
  * Counters for how the page talks to the chain.
@@ -117,6 +122,49 @@ function readConfig() {
   }
 }
 
+/**
+ * Forward `/api/candles` to the index service.
+ *
+ * THREE OUTCOMES, ALL OF THEM EXPLICIT:
+ *
+ *   200  the index service answered; its body is passed through unchanged, including
+ *        `count`, `pointsSkipped` and the note. Rewriting it here would create a
+ *        second place that decides what the numbers mean.
+ *   502  it is not running, or refused. Reported as 502 with a sentence, so the chart
+ *        can say "not reachable" instead of the page dying on an unhandled rejection.
+ *   504  it accepted the connection and did not answer in time.
+ *
+ * The timeout is not decoration: a proxy with no timeout on a local socket waits
+ * forever, and the chart then stays on its last frame while looking live.
+ */
+async function proxyCandles(pathAndQuery, res) {
+  const url = `${INDEX_API}${pathAndQuery}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const upstream = await fetch(url, { signal: controller.signal });
+    const body = await upstream.text();
+    res.writeHead(upstream.status, {
+      'content-type': upstream.headers.get('content-type') ?? 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    });
+    res.end(body);
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === 'AbortError';
+    res.writeHead(aborted ? 504 : 502, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(
+      JSON.stringify({
+        error: aborted
+          ? `the index service at ${INDEX_API} did not answer within 5s`
+          : `the index service at ${INDEX_API} is not reachable: ${err instanceof Error ? err.message : String(err)}`,
+        hint: 'Start it with: node --experimental-strip-types src/api/cli.ts  (in the erc4626-vault-dapp repository)',
+      }),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function proxyRpc(req, res) {
   const chunks = [];
   let size = 0;
@@ -182,6 +230,26 @@ const server = createServer(async (req, res) => {
 
   if (url === '/api/rpc' && req.method === 'POST') {
     return proxyRpc(req, res);
+  }
+
+  // The price history comes from the index service (the sibling `erc4626-vault-dapp`
+  // repository), which serves its own HTTP API on loopback. Proxying it here keeps the
+  // page SAME-ORIGIN, which matters for three reasons and not just convenience:
+  //
+  //   1. No CORS preflight, so the chart needs no server-side allowance and the index
+  //      service keeps refusing cross-origin requests -- which is right, because it has
+  //      no authentication and should not be reachable from a stranger's page.
+  //   2. The page has no second base URL to get wrong. A hard-coded
+  //      `http://127.0.0.1:8787` in the front end would be a deployment bug waiting for
+  //      the first person who runs the API on another port.
+  //   3. "The index service is down" becomes a normal, observable 502 from this server
+  //      instead of a browser-level network error the page has to guess about.
+  //
+  // The index service is NOT required for anything else on the page: balances and the
+  // price figure come straight off the chain. So a 502 here must leave the rest of the
+  // page working, and it does -- the chart is the only caller.
+  if (url.startsWith('/api/candles') && req.method === 'GET') {
+    return proxyCandles(url, res);
   }
 
   // How the page has been talking to the chain, for the browser tests. Read-only,
