@@ -72,6 +72,14 @@ const CHECKS = [
 
   // --- needs the dev server
   { name: 'dev server smoke test', file: 'web/tools/smoke-server.mjs', needs: 'server' },
+  {
+    // The only check that compares the PAGE against the CHAIN. Everything else
+    // tests one side or the other; this is the one that would have caught the
+    // wrong virtual-share term from the outside.
+    name: 'page figures agree with the chain (independently computed)',
+    file: 'scripts/check-page-vs-chain.mjs',
+    needs: 'server',
+  },
 ];
 
 const NEED = {
