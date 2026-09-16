@@ -72,17 +72,46 @@ async function main() {
       const bodies = svg ? svg.querySelectorAll('.chart-body').length : -1;
       const wicks = svg ? svg.querySelectorAll('.chart-wick').length : -1;
       const placeholder = svg ? (svg.querySelector('.chart-placeholder')?.textContent ?? null) : null;
+      const txt = (id) => { const n = document.getElementById(id); return n ? n.textContent : null; };
+      const eth = window.ethereum;
       return JSON.stringify({
         candles: bodies, wicks,
         placeholder,
         caption: cap ? cap.textContent : null,
         note: note ? note.textContent : null,
         ariaLabel: svg ? svg.getAttribute('aria-label') : null,
+        WALLET: {
+          hasEthereum: Boolean(eth),
+          isMetaMask: eth ? Boolean(eth.isMetaMask) : false,
+          providers: eth && eth.providers ? eth.providers.length : null,
+          selectedAddress: eth ? (eth.selectedAddress ?? null) : null,
+          chainId: eth ? (eth.chainId ?? null) : null,
+        },
+        PAGE: {
+          account: txt('account'),
+          chain: txt('chain'),
+          chainClass: document.getElementById('chain')?.className ?? null,
+          walletBalance: txt('wallet-balance'),
+          allowance: txt('allowance'),
+          shares: txt('share-balance'),
+          shareValue: txt('share-value'),
+          maxWithdraw: txt('max-withdraw'),
+          totalAssets: txt('total-assets'),
+          totalSupply: txt('total-supply'),
+          sharePrice: txt('share-price'),
+          assetSymbol: txt('asset-symbol'),
+          lastRead: txt('last-read'),
+          liveDot: document.getElementById('live-dot')?.className ?? null,
+          message: txt('message'),
+          messageClass: document.getElementById('message')?.className ?? null,
+          guardDisplay: document.getElementById('wrong-chain-guard')
+            ? getComputedStyle(document.getElementById('wrong-chain-guard')).display : null,
+        },
       }, null, 2);
     })()`,
     returnByValue: true,
   });
-  console.log('chart probe:');
+  console.log('probe:');
   console.log(probe.result.value);
 
   const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });

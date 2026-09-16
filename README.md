@@ -128,12 +128,18 @@ mistake is more instructive than the fix.
   The deployment script runs and has been exercised against a local chain, but it
   has not been run against a funded account on a public network.
 - **No external audit.** Self-reviewed plus two automated tools.
-- **The wallet dApp has never been used in a browser.** Every layer up to the
-  wallet boundary is tested — the deposit path is driven end to end against a fake
-  JSON-RPC chain, and `render.js` is exercised against a DOM stub — but no human
-  has yet clicked Approve in a real wallet on the real page. That is the manual
-  checklist in `web/DESIGN.md` §7, and until it is walked the honest description is
-  "implemented and tested to the wallet boundary", not "working".
+- **The dApp has been driven through real MetaMask, but not by a stranger, and not on
+  a public network.** What was done, and what it proves: with a genuine MetaMask
+  extension loaded, an approve and a deposit were executed against the local vault, and
+  every figure was checked against the chain independently rather than against the
+  page's own claim — the asset `Transfer` log carried exactly `10_000_000` base units,
+  the share delta equalled `assets * (totalSupply + 10**12) / (totalAssets + 1)`
+  computed by hand, and the receipt was `status 1`. A rejected prompt was confirmed
+  neutral rather than an error and cost nothing; an over-balance deposit sent no
+  transaction; the redeem Max button filled `359.021905704231281673` rather than its
+  base-unit form. What that does NOT cover: a public network, an account with real
+  value, wallet versions other than 13.48, or an operator other than the one who built
+  it. `web/DESIGN.md` §7 remains the checklist for a person meeting the page cold.
 - **The dApp uses a mock ERC-20, not real USDC.** The local chain deploys
   `MockERC20`; real-USDC integration is what the mainnet fork test covers.
 - **The fork test says nothing about Base Sepolia.** It forks mainnet because
