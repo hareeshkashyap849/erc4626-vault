@@ -183,9 +183,26 @@ node tools\dev-server.mjs   # http://127.0.0.1:5173/
 ```
 
 `dev-chain.ps1` starts a **fresh local chain, not a mainnet fork** — deliberately,
-so the demo works with no network. Addresses persist across restarts through
-`deployments/anvil-state.json`; re-running the deploy script without `-Force`
-reuses them, and `web/DESIGN.md` §5 records what that costs.
+so the demo works with no network. State lives in `deployments/anvil-state.json`
+(gitignored), so the vault and its balances survive a restart.
+
+**`-Managed`** runs anvil in the foreground instead of detaching it. Use it wherever
+anvil must be a managed child — a background job, a sandbox, CI — because those
+reap a detached process as soon as the parent exits. In a normal terminal the
+default (detached) is right: anvil should outlive the script.
+
+If the demo ever comes up with an empty vault, the balances were lost rather than
+the addresses — recover without redeploying, because `MockERC20.mint` is
+permissionless:
+
+```powershell
+node scripts\fund-demo.mjs    # mint the demo supply again
+node scripts\seed-demo.mjs    # top up a second holder, deposit, report yield
+```
+
+That is cheaper than a redeploy, which changes every address and therefore means
+re-importing into MetaMask and re-adding the network. `web/DESIGN.md` §5 records
+how the balances were lost in the first place (`--load-state` saves nothing).
 
 ---
 

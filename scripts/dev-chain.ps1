@@ -1,6 +1,7 @@
 # dev-chain.ps1 — bring up the whole local demo from nothing.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\dev-chain.ps1
+#   powershell -ExecutionPolicy Bypass -File scripts\dev-chain.ps1 -Managed    # see below
 #
 # Then add the network and account to MetaMask using the values it prints.
 #
@@ -19,6 +20,17 @@
 # It does not touch the network, it does not need a funded account, and it does
 # not need any faucet. The chain it starts is entirely self-contained: nothing on
 # it refers to a contract that does not live in its own state.
+#
+# -Managed
+#
+# Runs anvil in the FOREGROUND instead of detaching it, so it lives exactly as long
+# as whatever supervises this script. Use it when anvil must be a managed child --
+# a background job, a sandbox, CI -- because in those environments a detached
+# process is reaped as soon as the parent exits. The default (detached) is right for
+# a normal terminal, where the point is for anvil to outlive the script.
+param(
+  [switch]$Managed
+)
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path $PSScriptRoot -Parent
@@ -79,11 +91,30 @@ if ($already) {
     Write-Host '  no saved state; starting a fresh chain'
   }
 
-  # --load-state versus --state matters. They behave as aliases when the file
-  # exists, but only --dump-state / --state writes on exit; a run started with
-  # --load-state alone loads and then discards. So the flag follows which of the
-  # two things we are doing.
-  $stateArg = if ($resuming) { '--load-state' } else { '--state' }
+  # --state versus --load-state versus --dump-state.
+  #
+  # `--state <file>` LOADS the file and, on a GRACEFUL exit, writes it back. That
+  # is the flag that matters here, and the distinction is not cosmetic: a chain
+  # started with it and then killed (rather than interrupted) writes NOTHING. That
+  # is exactly what happened to this demo -- anvil was terminated with the job, the
+  # state file was never rewritten, and the deposits, the reported yield and every
+  # MetaMask transaction were lost, leaving a file from an earlier run.
+  #
+  # --load-state is therefore NOT used as the resume path any more. It loads and
+  # then discards, which looks like it works and silently guarantees the next
+  # restart loses everything again.
+  $stateArg = '--state'
+
+  if ($Managed) {
+    # Foreground: anvil is this script's child and dies with it. Right for a
+    # sandbox, a background job or CI, where a detached process is reaped anyway.
+    Write-Host '  starting anvil in the FOREGROUND (managed; it dies with this process)'
+    Write-Host '  the state file is written when this process is interrupted gracefully'
+    & anvil --port 8545 --chain-id $CHAIN_ID --block-time 2 --host 127.0.0.1 `
+      $stateArg $stateFile --state-interval 5
+    # anvil runs until interrupted; reaching here means it exited.
+    throw 'anvil exited unexpectedly'
+  }
 
   # Start-Process WITHOUT -WindowStyle. With it, the shell keeps waiting on the
   # child it created, so anvil stayed inside this script's process tree and died
