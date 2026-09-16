@@ -71,11 +71,12 @@
 <main>
   <section class="panel">
     <h2>Your position</h2>
+    <p class="note" id="position-share-note">Your slice of the vault. The vault's totals are below — they include everyone else's deposits too.</p>
     <div id="stale-marker" class="stale" hidden></div>
     <dl class="figures">
       <div><dt>Wallet balance</dt><dd id="wallet-balance">—</dd></div>
       <div><dt>Approved allowance</dt><dd id="allowance">—</dd></div>
-      <div><dt>Your shares</dt><dd id="share-balance">—</dd></div>
+      <div><dt>Your shares <span class="hint" id="share-percent"></span></dt><dd id="share-balance">—</dd></div>
       <div><dt>Those shares are worth <span class="hint">(estimate)</span></dt><dd id="share-value">—</dd></div>
       <div><dt>Withdrawable now</dt><dd id="max-withdraw">—</dd></div>
     </dl>
@@ -83,9 +84,10 @@
 
   <section class="panel">
     <h2>Vault</h2>
+    <p class="note">These are the vault's own totals, across every depositor.</p>
     <dl class="figures">
       <div><dt>Total assets</dt><dd id="total-assets">—</dd></div>
-      <div><dt>Total shares</dt><dd id="total-supply">—</dd></div>
+      <div><dt>Total shares <span class="hint">(all holders)</span></dt><dd id="total-supply">—</dd></div>
       <div><dt>Price per share <span class="hint">(assets)</span></dt><dd id="share-price">—</dd></div>
       <div><dt>Asset</dt><dd id="asset-symbol">—</dd></div>
     </dl>

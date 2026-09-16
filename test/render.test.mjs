@@ -744,6 +744,57 @@ test('renderBusy(false) does not leave the buttons disabled', async () => {
   assert.equal(dom.elements.get('deposit-button').disabled, false, 'the page must come back to life after a transaction');
 });
 
+/**
+ * @dev The question a real user asked: "why is my position different from the total
+ * number of shares?"
+ *
+ * Both numbers were correct. Nothing on the page said the vault has more than one
+ * depositor, so 268 beside 768 looked like a contradiction rather than a slice
+ * beside a whole.
+ */
+test('renderState says what fraction of the vault the user owns', async () => {
+  const { dom, render } = await loadRender();
+
+  // 268 of 768 shares.
+  const held = 268n * 10n ** 18n;
+  const total = 768n * 10n ** 18n;
+  render.renderState({ ...STATE, shares: held, totalSupply: total }, { hasAccount: true });
+
+  const percent = dom.elements.get('share-percent').visibleText;
+  // 268/768 = 34.895833...%, which rounds to 34.90%. My first version of this test
+  // asserted 34.89% -- I truncated where the code rounds, and the code was right.
+  assert.match(percent, /34\.90%/, `expected roughly a third of the vault, got "${percent}"`);
+  assert.match(percent, /of all shares/, 'and it must say what the percentage is OF');
+  // The two figures must remain visibly different -- that is the point of them.
+  assert.notEqual(dom.elements.get('share-balance').visibleText, dom.elements.get('total-supply').visibleText);
+});
+
+test('renderState stays silent about a share of the vault when nothing is connected', async () => {
+  const { dom, render } = await loadRender();
+  render.renderState({ ...STATE, shares: 0n, totalSupply: 100n * 10n ** 18n }, { hasAccount: false });
+  assert.equal(dom.elements.get('share-percent').visibleText, '', 'the page does not know whose slice to describe');
+});
+
+test('renderState distinguishes "none" from a rounding artefact', async () => {
+  const { dom, render } = await loadRender();
+
+  // Connected, holding nothing: the vault belongs to other people.
+  render.renderState({ ...STATE, shares: 0n, totalSupply: 768n * 10n ** 18n }, { hasAccount: true });
+  assert.match(dom.elements.get('share-percent').visibleText, /none/, 'holding nothing must say so');
+
+  // A real but tiny holding must not be reported as "0.00%".
+  render.renderState({ ...STATE, shares: 1n, totalSupply: 10n ** 24n }, { hasAccount: true });
+  const tiny = dom.elements.get('share-percent').visibleText;
+  assert.match(tiny, /less than 0\.01%/, `a tiny real holding should not read as 0.00%, got "${tiny}"`);
+  assert.doesNotMatch(tiny, /^\(0\.00%/, 'that would be a rounding artefact presented as a holding');
+});
+
+test('renderState says nothing about a share when the vault is empty', async () => {
+  const { dom, render } = await loadRender();
+  render.renderState({ ...STATE, shares: 0n, totalSupply: 0n, totalAssets: 0n }, { hasAccount: true });
+  assert.equal(dom.elements.get('share-percent').visibleText, '', 'there is no fraction of nothing');
+});
+
 test('renderDeployment shows the full addresses and the block', async () => {
   const { dom, render } = await loadRender();
   render.renderDeployment({

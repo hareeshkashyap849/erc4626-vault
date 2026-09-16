@@ -612,7 +612,17 @@ async function main() {
     await browser.click('deposit-max-button');
     const maxFilled = await browser.evaluate(`document.getElementById('deposit-amount').value`);
     eq('the Max button fills the exact balance, to the last decimal', maxFilled, formatUnits(held, 6));
-    check('the filled value really is not the round number a wallet shows', maxFilled !== '5850' && maxFilled.includes('.999999'), `value="${maxFilled}"`);
+    // The property that matters is PRECISION, not any particular digits. An earlier
+    // version of this assertion looked for ".999999", which happened to be true the
+    // first time and false the next run -- the tail shifts with every deposit, so
+    // asserting the digits asserts the run rather than the behaviour. A wallet shows
+    // four decimals; the page must offer more.
+    const decimalsShown = (maxFilled.split('.')[1] ?? '').length;
+    check(
+      'the filled value carries more decimals than a wallet displays',
+      decimalsShown > 4,
+      `value="${maxFilled}" has ${decimalsShown} decimals, a wallet shows 4`,
+    );
 
     // And that exact amount is actually accepted, i.e. the boundary is not off by one.
     await browser.click('deposit-button');

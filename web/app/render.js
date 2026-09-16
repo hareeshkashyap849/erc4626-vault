@@ -44,7 +44,7 @@ export function shortenAddress(address) {
  * the real symbol the whole time. A screenshot caught it; no test did, because
  * every test supplied the option itself.
  */
-export function renderState(state, { symbol = undefined, decimals = undefined, stale = false } = {}) {
+export function renderState(state, { symbol = undefined, decimals = undefined, stale = false, hasAccount = false } = {}) {
   const assetDecimals = state.assetDecimals ?? decimals ?? 6;
   const shareDecimals = state.shareDecimals ?? 18;
   const assetSymbol = symbol ?? state.symbol ?? '';
@@ -57,6 +57,39 @@ export function renderState(state, { symbol = undefined, decimals = undefined, s
   setText('max-withdraw', formatUnits(state.maxWithdraw ?? 0n, assetDecimals));
   setText('total-assets', `${formatUnits(state.totalAssets ?? 0n, assetDecimals)} ${assetSymbol}`.trim());
   setText('total-supply', formatUnits(state.totalSupply ?? 0n, shareDecimals));
+
+  /**
+   * Say out loud what fraction of the vault the user owns.
+   *
+   * A user saw "Your shares 268" beside "Total shares 768" and asked why the two
+   * differ -- a completely reasonable question, because nothing on the page said
+   * the vault has more than one depositor. They are different numbers by
+   * definition: one is your slice, the other is the whole pie. Saying so takes one
+   * line, and its absence made a correct page look broken.
+   *
+   * `hasAccount` is passed in rather than inferred: with no account connected the
+   * page does not know whose slice to describe, and the per-account figures are all
+   * zero, so it must stay silent rather than announce "you hold none".
+   */
+  const totalShares = state.totalSupply ?? 0n;
+  const heldShares = state.shares ?? 0n;
+  const percentNode = el('share-percent');
+  if (percentNode) {
+    if (!hasAccount || totalShares === 0n) {
+      percentNode.textContent = '';
+    } else if (heldShares === 0n) {
+      percentNode.textContent = '(none — the vault has other depositors)';
+    } else {
+      // Counted in hundredths of a percent, so the comparison stays in integers --
+      // and so the wording can distinguish "0.00%" from "less than 0.01%", which is
+      // the difference between a rounding artefact and a real holding.
+      const hundredthsOfPercent = (heldShares * 1_000_000n) / totalShares;
+      percentNode.textContent =
+        hundredthsOfPercent === 0n
+          ? '(less than 0.01% of all shares)'
+          : `(${(Number(hundredthsOfPercent) / 10_000).toFixed(2)}% of all shares)`;
+    }
+  }
 
   // An empty vault has no share price. Showing "1.0" would be a lie told for
   // tidiness: there is no price until someone deposits.

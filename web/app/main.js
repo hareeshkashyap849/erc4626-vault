@@ -82,7 +82,10 @@ async function refresh({ silent = false } = {}) {
       account,
     });
     app.lastState = state;
-    renderState(state, { stale: false });
+    // `hasAccount` tells renderState whether the per-account figures mean anything.
+    // With no account connected they are all zero, and "you hold none" would be a
+    // claim about a person the page has not met.
+    renderState(state, { stale: false, hasAccount: Boolean(account) });
     // Refresh re-reads and redraws; when nothing changed on chain the pixels are
     // identical, so this line is the only evidence the press did anything.
     renderLastRead(new Date());
@@ -92,7 +95,7 @@ async function refresh({ silent = false } = {}) {
     renderLastRead(new Date(), { failed: true });
     if (!silent) {
       if (app.lastState) {
-        renderState(app.lastState, { stale: true });
+        renderState(app.lastState, { stale: true, hasAccount: Boolean(account) });
         renderMessage({ tone: 'warn', title: 'Showing older figures', detail: `The latest read failed: ${err?.shortMessage ?? err?.message ?? err}` });
       } else {
         renderMessage({ tone: 'error', title: 'Cannot read the vault', detail: `${err?.shortMessage ?? err?.message ?? err}\n\nIf this is the local chain, is anvil still running?` });
