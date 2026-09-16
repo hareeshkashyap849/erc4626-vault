@@ -70,6 +70,11 @@ class StubNode {
     this.listeners.get(type).push(fn);
   }
 
+  /** How many handlers are attached. Used to prove a button is not inert. */
+  listenerCount(type) {
+    return (this.listeners.get(type) ?? []).length;
+  }
+
   /** Fire a listener, so the wiring in main.js is exercised, not just present. */
   async dispatch(type) {
     for (const fn of this.listeners.get(type) ?? []) await fn({ type });
@@ -107,6 +112,30 @@ function makeDom() {
 }
 
 const RENDER = resolve(REPO, 'web', 'app', 'render.js');
+
+/**
+ * The browser globals viem expects to exist.
+ *
+ * Collected in one place with a comment, rather than added one at a time as each
+ * ReferenceError appears -- which is what happened: TextEncoder first, then
+ * AbortController. The context below also gets `document`, `window` and `fetch`
+ * from the stub, which are the ones main.js itself needs.
+ */
+const BROWSER_GLOBALS = {
+  TextEncoder,
+  TextDecoder,
+  crypto: globalThis.crypto,
+  structuredClone: globalThis.structuredClone,
+  AbortController,
+  AbortSignal,
+  Event,
+  EventTarget,
+  MessageChannel,
+  performance: globalThis.performance,
+  queueMicrotask,
+  atob: globalThis.atob,
+  btoa: globalThis.btoa,
+};
 
 /**
  * Load the real render.js with the DOM stub installed as its globals.
@@ -385,6 +414,50 @@ test('renderControls shows the caller-supplied hint when not otherwise blocked',
   assert.match(dom.elements.get('control-hint').visibleText, /pay out 1/);
 });
 
+/**
+ * @dev The bug seen in a real browser: no wallet installed, so `start()` returned
+ * early and never wired the buttons. Clicking Connect did nothing at all -- no
+ * message, no error, no way to recover but reloading.
+ *
+ * "No wallet" must be a state the page explains, not a state in which it stops.
+ */
+test('renderControls names a missing wallet rather than only a missing connection', async () => {
+  const { dom, render } = await loadRender();
+
+  render.renderControls({ hasWallet: false, connected: false, correctChain: false, busy: false, amountIsValid: true, sharesToRedeem: true });
+
+  const hint = dom.elements.get('control-hint').visibleText;
+  assert.match(hint, /wallet/i);
+  assert.doesNotMatch(hint, /^connect a wallet first$/, '"connect a wallet" is useless advice to someone who has not installed one');
+  assert.equal(dom.elements.get('deposit-button').disabled, true);
+  assert.equal(dom.elements.get('redeem-button').disabled, true);
+});
+
+test('renderControls prefers the most fundamental missing thing', async () => {
+  const { dom, render } = await loadRender();
+
+  // No wallet AND not connected AND wrong chain: the hint must name the wallet,
+  // because that is the thing to fix first.
+  render.renderControls({ hasWallet: false, connected: false, correctChain: false, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.match(dom.elements.get('control-hint').visibleText, /wallet/i);
+
+  // Wallet present but not connected: now "connect" is the right advice.
+  render.renderControls({ hasWallet: true, connected: false, correctChain: false, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.match(dom.elements.get('control-hint').visibleText, /connect/i);
+
+  // Connected but on the wrong chain.
+  render.renderControls({ hasWallet: true, connected: true, correctChain: false, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.match(dom.elements.get('control-hint').visibleText, /network/i);
+});
+
+test('renderControls defaults hasWallet to true so an old call site still works', async () => {
+  const { dom, render } = await loadRender();
+  // Not defensive coding for its own sake: a caller that forgets the flag should
+  // see the page behave as before, not be told a wallet is missing.
+  render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true });
+  assert.equal(dom.elements.get('deposit-button').disabled, false);
+});
+
 test('renderBusy toggles the indicator and does not touch the buttons', async () => {
   const { dom, render } = await loadRender();
 
@@ -475,4 +548,184 @@ test('shortenAddress keeps short strings intact instead of mangling them', async
   assert.equal(render.shortenAddress('0x1234'), '0x1234');
   assert.equal(render.shortenAddress(null), '');
   assert.equal(render.shortenAddress('0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'), '0xa0Ee…9720');
+});
+
+// ------------------------------------------------------------------ main.js
+//
+// WHY main.js IS TESTED HERE AT ALL
+//
+// The bug this section exists for was seen in a real browser: MetaMask was
+// installed, the page had loaded a moment before it injected itself, and clicking
+// "Connect wallet" did NOTHING. No message, no error, no way to recover but a
+// reload. The cause was an early `return` in start() for the no-wallet case, which
+// skipped the block that wires the buttons.
+//
+// No existing check could see it. check-modules.mjs proves the modules link and
+// that the ids match index.html; the render tests below call render.js directly.
+// Neither one runs start(), so neither one can notice that a button has no
+// handler. That is the gap this closes: load main.js against the DOM stub with a
+// stubbed fetch, let start() finish, and assert the buttons respond.
+
+/** Load main.js with the DOM stub, a stubbed fetch, and an optional wallet. */
+async function loadMain({ ethereum = null, config = null } = {}) {
+  const dom = makeDom();
+  const fetchStub = async (url) => {
+    const path = String(url);
+    if (path.endsWith('/api/config')) {
+      const body = config ?? {
+        ok: true,
+        chainId: 31337,
+        rpcUrl: '/api/rpc',
+        walletRpcUrl: 'http://127.0.0.1:8545',
+        chainName: 'Anvil Local',
+        vault: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0',
+        asset: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+        deployBlock: 8,
+      };
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }
+    // Every RPC read fails. start() must survive that and still wire the page:
+    // a dead chain is a normal thing for this page to have to report, not a
+    // reason for it to stop working.
+    throw new Error('no chain in this test');
+  };
+
+  // In a browser, `globalThis === window`, and that is what `findProvider()` relies
+  // on: it defaults to `globalThis` and reads `.ethereum` off it. A vm context is
+  // NOT its own window, so setting `ethereum` only on a `window` stub makes
+  // findProvider return null and produces a FALSE FAILURE -- the same
+  // "expected a connect prompt, saw nothing" as the real bug, which is a
+  // distinction worth getting right rather than guessing at.
+  //
+  // So `window` is a view of the context object itself. Reads fall through to it,
+  // and the two event methods the page uses are provided.
+  const sandbox = {
+    document: dom.document,
+    fetch: fetchStub,
+    console,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    URL,
+    location: { origin: 'http://127.0.0.1:5173' },
+    ethereum: ethereum ?? undefined,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    // viem's transitive dependencies reach for browser globals at evaluation time
+    // (TextEncoder via noble-hashes and scure-bip32; AbortController inside the
+    // HTTP transport). A browser has them all; a bare vm context has none, and the
+    // failure surfaces as a ReferenceError from inside web/vendor rather than from
+    // the code under test, which reads like a vendoring problem.
+    ...BROWSER_GLOBALS,
+  };
+
+  const context = vm.createContext(sandbox);
+  // `window` must be the SAME object as globalThis from the module's point of view,
+  // so a read of either path finds the provider. Assigning it inside the context
+  // (rather than passing it in) is what makes them identical.
+  vm.runInContext('globalThis.window = globalThis;', context);
+
+  const cache = new Map();
+  const load = (path) => {
+    const key = resolve(path);
+    if (!cache.has(key)) {
+      cache.set(key, new vm.SourceTextModule(readFileSync(key, 'utf8'), { identifier: key, context }));
+    }
+    return cache.get(key);
+  };
+
+  const root = load(resolve(REPO, 'web', 'app', 'main.js'));
+  await root.link(async (specifier, referencing) => {
+    const from = referencing ? dirname(referencing.identifier) : dirname(resolve(REPO, 'web', 'app', 'main.js'));
+    return load(resolve(from, specifier));
+  });
+  // `start()` is async and not awaited by the module. It awaits a fetch and a
+  // `wallet.refresh()`, both of which resolve on MACROtasks, so yielding only
+  // microtasks ends the wait too early -- and the symptom is confusing: the
+  // buttons look unwired (a zero listener count) when in fact start() is simply
+  // still running. That is the same failure mode as the real bug, which makes it
+  // worth distinguishing carefully: this helper waits on timers, so a zero
+  // listener count afterwards really does mean the handler was never attached.
+  await root.evaluate();
+  for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+
+  return { dom, window: sandbox };
+}
+
+/** A minimal EIP-1193 provider. Counts prompts so tests can assert on them. */
+function fakeEthereum({ accounts = ['0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'], chainId = '0x7a69' } = {}) {
+  const calls = [];
+  return {
+    calls,
+    on: () => {},
+    removeListener: () => {},
+    async request({ method, params = [] }) {
+      calls.push({ method, params });
+      switch (method) {
+        case 'eth_chainId':
+          return chainId;
+        case 'eth_accounts':
+          return accounts;
+        case 'eth_requestAccounts':
+          return accounts;
+        default:
+          throw new Error(`the fake wallet does not implement ${method}`);
+      }
+    },
+  };
+}
+
+test('main.js wires the buttons even when NO wallet is present', async () => {
+  const { dom } = await loadMain({ ethereum: null });
+
+  // The exact failure seen in the browser: no provider, so the old code returned
+  // before this line and the button had zero handlers.
+  assert.ok(dom.elements.get('connect-button').listenerCount('click') > 0, 'the Connect button must respond even with no wallet installed');
+
+  for (const id of ['refresh-button', 'switch-chain-button', 'deposit-button', 'approve-button', 'redeem-button', 'redeem-max-button']) {
+    assert.ok(dom.elements.get(id).listenerCount('click') > 0, `${id} must have a click handler`);
+  }
+  for (const id of ['deposit-amount', 'redeem-amount']) {
+    assert.ok(dom.elements.get(id).listenerCount('input') > 0, `${id} must re-evaluate the buttons as it is typed into`);
+  }
+});
+
+test('main.js explains the missing wallet instead of failing silently', async () => {
+  const { dom } = await loadMain({ ethereum: null });
+
+  // A visible message, because the previous behaviour was silence.
+  const message = dom.elements.get('message').visibleText;
+  assert.match(message, /wallet/i, `expected a message about the wallet, got "${message}"`);
+  assert.match(dom.elements.get('control-hint').visibleText, /wallet/i);
+});
+
+test('clicking Connect with no wallet says what to do rather than doing nothing', async () => {
+  const { dom } = await loadMain({ ethereum: null });
+
+  await dom.elements.get('connect-button').dispatch('click');
+
+  const message = dom.elements.get('message').visibleText;
+  assert.match(message, /wallet/i);
+  // It must not claim the user did something wrong, and it must not be an
+  // unclassified failure -- this is an expected state.
+  assert.doesNotMatch(message, /undefined/);
+  assert.doesNotMatch(dom.elements.get('message').className, /\berror\b/, 'a missing wallet is not an error the user caused');
+});
+
+test('main.js attaches the wallet when one IS present, and reads state after connecting', async () => {
+  const ethereum = fakeEthereum();
+  const { dom } = await loadMain({ ethereum });
+
+  await dom.elements.get('connect-button').dispatch('click');
+
+  // eth_requestAccounts is the call that opens the wallet's prompt; if the click
+  // handler did not reach Wallet.connect, this never appears.
+  assert.ok(
+    ethereum.calls.some((c) => c.method === 'eth_requestAccounts'),
+    `expected a connect prompt, saw ${ethereum.calls.map((c) => c.method).join(', ') || 'nothing'}`,
+  );
+  assert.equal(dom.elements.get('account').textContent, '0xa0Ee7A142d267C1f36714E4a8F75612F20a79720', 'the connected account is shown');
+  assert.match(dom.elements.get('chain').visibleText, /Anvil Local/);
+  assert.match(dom.elements.get('message').visibleText, /Connected/);
 });

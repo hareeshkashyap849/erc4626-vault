@@ -183,14 +183,19 @@ export function clearMessage() {
  * arithmetic of its own. It is the one blocking condition the caller knows and
  * this function cannot.
  */
-export function renderControls({ connected, correctChain, busy, amountIsValid, sharesToRedeem, hint = null }) {
-  const blocked = !connected
-    ? 'connect a wallet first'
-    : !correctChain
-      ? 'switch to the right network first'
-      : busy
-        ? 'a transaction is in progress'
-        : null;
+export function renderControls({ hasWallet = true, connected, correctChain, busy, amountIsValid, sharesToRedeem, hint = null }) {
+  // Ordered most-fundamental first, so the hint names the earliest thing that is
+  // missing rather than the last. "Connect a wallet first" is useless advice to
+  // someone who has not installed one.
+  const blocked = !hasWallet
+    ? 'no browser wallet detected — the vault figures above are still real reads'
+    : !connected
+      ? 'connect a wallet first'
+      : !correctChain
+        ? 'switch to the right network first'
+        : busy
+          ? 'a transaction is in progress'
+          : null;
 
   // When blocked, everything is disabled; otherwise each button answers to its
   // own input. Two separate reasons, so they are not collapsed into one flag.

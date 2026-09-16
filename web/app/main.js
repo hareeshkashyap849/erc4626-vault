@@ -120,6 +120,10 @@ function syncControls() {
       : null;
 
   renderControls({
+    // No provider at all is its own reason. Without this, the redeem button would
+    // be enabled on a page with no wallet, and pressing it would throw a bare
+    // "no EIP-1193 provider" instead of saying what to do.
+    hasWallet: Boolean(app.wallet),
     connected: Boolean(state.connected && state.account),
     correctChain: Number(state.chainId) === Number(app.config.chainId),
     busy: app.busy,
@@ -169,10 +173,40 @@ async function onWalletState(state) {
 
 async function connect() {
   clearMessage();
+
+  // Look for a provider BEFORE the try, and report its absence as information
+  // rather than as a failure. Throwing here would route through classify(), which
+  // cannot recognise this message and would return UNKNOWN -- painting a red error
+  // for something the user did not do wrong and may not be able to fix at all.
+  // "No wallet installed" is a fact about the environment, not a fault.
+  if (!app.wallet) {
+    const provider = findProvider();
+    if (provider) {
+      await attachWallet(provider);
+    } else {
+      renderMessage({
+        tone: 'warn',
+        title: 'No browser wallet found',
+        detail:
+          'MetaMask injects itself into the page, so it may take a moment after install or enable. This page checks for it automatically — press Connect wallet again in a few seconds. If it never appears, check that the extension is enabled for this site, then reload.',
+      });
+      return;
+    }
+  }
+
   try {
-    if (!app.wallet) throw new Error('no EIP-1193 wallet found. Install MetaMask (or another browser wallet) and reload.');
     await app.wallet.connect();
-    renderMessage({ tone: 'info', title: 'Connected', detail: `Reading from ${app.config.rpcUrl}` });
+    // Saying which network the page is reading from is more useful than saying
+    // "connected", because the next thing the user needs is to be on the right one.
+    const { chainId } = app.wallet.state;
+    renderMessage({
+      tone: 'info',
+      title: 'Connected',
+      detail:
+        Number(chainId) === Number(app.config.chainId)
+          ? `Reading from chain ${chainId}.`
+          : `Your wallet is on chain ${chainId}; this vault is on ${app.config.chainId}. Switch networks to deposit.`,
+    });
   } catch (err) {
     // A refused connect prompt is a decision, not a fault.
     showError(err);
@@ -348,6 +382,115 @@ function fillMaxRedeem() {
   syncControls();
 }
 
+/**
+ * Attach the wallet, if there is one.
+ *
+ * Called at startup AND again if a provider appears later, because MetaMask
+ * injects `window.ethereum` asynchronously: a page that loaded first sees no
+ * provider, and the user who then installs or enables the extension would find a
+ * page that never notices.
+ *
+ * Idempotent -- the guard on `app.wallet` means a second call is a no-op.
+ */
+async function attachWallet(provider) {
+  if (app.wallet) return app.wallet;
+  app.wallet = new Wallet(provider);
+  app.wallet.subscribe(onWalletState);
+  try {
+    await app.wallet.refresh();
+  } catch {
+    // Some wallets refuse eth_accounts until the origin is granted. Not fatal:
+    // the user can press Connect.
+  }
+  return app.wallet;
+}
+
+/**
+ * Wait for a provider to appear, then attach it.
+ *
+ * WHY THIS IS NOT JUST A RETRY BUTTON
+ *
+ * The failure this fixes was seen in a real browser: MetaMask was installed, the
+ * page had been loaded a moment earlier, so `findProvider()` returned null -- and
+ * the old code returned early from `start()`, which meant the Connect button never
+ * got a click handler at all. Clicking it did nothing, with no message, and no way
+ * to recover except reloading. "Install a wallet and reload" is a bad instruction
+ * to give someone who has just installed a wallet.
+ *
+ * EIP-6963 wallets also announce themselves with an `eip6963:announceProvider`
+ * event; the plain `ethereum#initialized` event is what MetaMask fires. Both are
+ * listened for, and a slow poll covers wallets that do neither.
+ */
+function watchForWallet({ timeoutMs = 30_000, intervalMs = 300 } = {}) {
+  let settled = false;
+
+  // Declared before `stop` uses them. `onProvider` can run synchronously from the
+  // event listener at the bottom of this function, and `stop` then reads `expiry`
+  // -- if `expiry` were declared below, that read would be a temporal-dead-zone
+  // ReferenceError thrown from inside a listener, where it is invisible, and the
+  // poll would keep running forever.
+  let timer = null;
+  let expiry = null;
+
+  const stop = () => {
+    if (timer !== null) clearInterval(timer);
+    if (expiry !== null) clearTimeout(expiry);
+    window.removeEventListener('ethereum#initialized', onProvider);
+    window.removeEventListener('eip6963:announceProvider', onProvider);
+  };
+
+  const onProvider = async () => {
+    if (settled || app.wallet) return;
+    const provider = findProvider();
+    if (!provider) return;
+    settled = true;
+    stop();
+    await attachWallet(provider);
+    renderMessage({ tone: 'info', title: 'Wallet detected', detail: 'Press Connect wallet to continue.' });
+    setText('control-hint', '');
+    await refresh({ silent: true });
+    syncControls();
+  };
+
+  // `unref` where it exists so a waiting poll does not hold a Node process open.
+  // In a browser it is absent and this is a no-op; in the tests it is the
+  // difference between a 0.3s suite and a 30s one, because setTimeout's full
+  // timeout keeps the event loop alive.
+  timer = setInterval(onProvider, intervalMs);
+  timer.unref?.();
+  expiry = setTimeout(() => {
+    if (!app.wallet) stop();
+  }, timeoutMs);
+  expiry.unref?.();
+
+  window.addEventListener('ethereum#initialized', onProvider);
+  window.addEventListener('eip6963:announceProvider', onProvider);
+
+  return stop;
+}
+
+/**
+ * Wire the controls.
+ *
+ * Separate from `start()`, and called unconditionally, because the previous
+ * structure put this AFTER an early `return` for the no-wallet case -- so the
+ * page's buttons were inert exactly when the user most needed feedback. The reads
+ * work with no wallet at all, so there is no reason for the controls to be dead.
+ */
+function wireControls() {
+  el('connect-button').addEventListener('click', connect);
+  el('switch-chain-button').addEventListener('click', switchChain);
+  el('refresh-button').addEventListener('click', () => refresh());
+  el('deposit-button').addEventListener('click', doDeposit);
+  el('approve-button').addEventListener('click', doApprove);
+  el('redeem-button').addEventListener('click', doRedeem);
+  el('redeem-max-button').addEventListener('click', fillMaxRedeem);
+
+  for (const id of ['deposit-amount', 'redeem-amount']) {
+    el(id).addEventListener('input', syncControls);
+  }
+}
+
 async function start() {
   try {
     app.config = await loadConfig();
@@ -370,39 +513,25 @@ async function start() {
   // page was broken before they had done anything.
   renderChain(chainView({ account: null, chainId: null, connected: false }));
 
+  // Wired BEFORE the provider check, so the buttons work in every case.
+  wireControls();
+
   const provider = findProvider();
-  if (!provider) {
-    renderMessage({ tone: 'warn', title: 'No browser wallet detected', detail: 'The vault totals below are still real reads. Connect a wallet to deposit or redeem.' });
-    setText('control-hint', 'install a browser wallet (for example MetaMask) and reload to deposit or redeem');
-    // Still worth reading: the vault's totals do not need an account, and
-    // "the vault holds 40 tokens" is the one fact a visitor can check without
-    // any wallet at all.
-    await refresh({ silent: false });
-    return;
+  if (provider) {
+    await attachWallet(provider);
+  } else {
+    renderMessage({
+      tone: 'warn',
+      title: 'No browser wallet detected yet',
+      detail: 'The vault totals below are real reads from the chain, so they work without a wallet. If you have just installed MetaMask, this page will notice it on its own in a moment — or press Connect wallet.',
+    });
+    setText('control-hint', 'deposit and redeem need a browser wallet; the vault figures above do not');
+    // Watches for MetaMask appearing, so someone who installs it while this page
+    // is open does not have to know to reload.
+    watchForWallet();
   }
 
-  app.wallet = new Wallet(provider);
-  app.wallet.subscribe(onWalletState);
-  try {
-    await app.wallet.refresh();
-  } catch {
-    // Some wallets refuse eth_accounts until the origin is granted. That is not
-    // fatal: the user can press Connect.
-  }
-
-  el('connect-button').addEventListener('click', connect);
-  el('switch-chain-button').addEventListener('click', switchChain);
-  el('refresh-button').addEventListener('click', () => refresh());
-  el('deposit-button').addEventListener('click', doDeposit);
-  el('approve-button').addEventListener('click', doApprove);
-  el('redeem-button').addEventListener('click', doRedeem);
-  el('redeem-max-button').addEventListener('click', fillMaxRedeem);
-
-  for (const id of ['deposit-amount', 'redeem-amount']) {
-    el(id).addEventListener('input', syncControls);
-  }
-
-  await refresh({ silent: true });
+  await refresh({ silent: false });
   syncControls();
 }
 
