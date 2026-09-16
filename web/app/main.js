@@ -28,7 +28,7 @@ import {
   renderChain,
   renderControls,
   renderDeployment,
-  renderLastRead,
+  renderLive,
   renderMessage,
   renderState,
   setText,
@@ -54,6 +54,8 @@ const app = {
    * be a stale copy.
    */
   busy: false,
+  /** A read is in flight. Guards against two reads racing to write the same DOM. */
+  reading: false,
   explorerUrl: null,
 };
 
@@ -68,9 +70,184 @@ async function loadConfig() {
   return body;
 }
 
+/**
+ * Keep the figures current without being asked.
+ *
+ * WHY POLLING RATHER THAN EVENTS
+ *
+ * Wallet events (`accountsChanged`, `chainChanged`) cover the user's own wallet and
+ * nothing else. A vault's totals change when SOMEBODY ELSE deposits, redeems, or
+ * reports yield -- and there is no event for that without an indexer, which is what
+ * P4 is for. So the page reads on a timer.
+ *
+ * THE TIMER IS NOT ALWAYS RUNNING, and each rule is for a different reason:
+ *
+ *   - Hidden tab: no polling. A background tab re-reading a chain every few seconds
+ *     is pure waste, and nobody is looking.
+ *   - Becoming visible again: read IMMEDIATELY, then resume. Waiting out the
+ *     remaining interval would show stale figures for up to one interval at exactly
+ *     the moment the user came back to look at them.
+ *   - While a transaction is in flight: no polling. The figures are being rewritten
+ *     by the write path, and a poll landing in the middle would race it.
+ *   - User can pause: some people want the page to hold still while they compare
+ *     numbers, and a page that argues with you is worse than one that is manual.
+ *
+ * `setTimeout` chained rather than `setInterval`: a read that takes longer than the
+ * interval would otherwise stack up requests, and the countdown shown to the user
+ * needs a definite "next read at" anyway.
+ */
+const LIVE_INTERVAL_MS = 5_000;
+const COUNTDOWN_TICK_MS = 500;
+
+const live = {
+  enabled: true,
+  timer: null,
+  countdown: null,
+  nextAt: 0,
+  lastAt: null,
+  lastFailed: false,
+};
+
+function renderLiveNow() {
+  if (live.lastFailed) return renderLive({ mode: 'stale' });
+  if (!live.enabled) return renderLive({ mode: 'paused', at: live.lastAt });
+  renderLive({ mode: 'live', at: live.lastAt, nextInMs: Math.max(0, live.nextAt - Date.now()) });
+}
+
+/**
+ * Arm the next chain read.
+ *
+ * ONE TIMER PER JOB. An earlier version had a single `scheduleLive()` managing both
+ * this timer and the countdown, and the countdown's callback called `scheduleLive()`
+ * again on its way out -- which CLEARED AND RESTARTED THIS TIMER every 500ms. The
+ * five-second read could therefore never fire: it was starved by its own countdown.
+ *
+ * The symptom was as confusing as it sounds. The indicator ticked "next in 5s",
+ * "next in 4s"… and the figures never moved, while pressing Live caught up at once
+ * (because that path reads directly instead of waiting for the timer). A page that
+ * reports it is about to refresh, for ever, is worse than one that says it is idle.
+ */
+function armReadTimer() {
+  clearTimeout(live.timer);
+  live.timer = null;
+  if (!live.enabled || document.hidden) return;
+  live.nextAt = Date.now() + LIVE_INTERVAL_MS;
+  live.timer = setTimeout(async () => {
+    // Re-checked inside the callback, not only at arming time: the tab can be
+    // hidden, or a transaction can start, between the two.
+    if (document.hidden || app.busy) return armReadTimer();
+    await refresh({ silent: true });
+    armReadTimer();
+  }, LIVE_INTERVAL_MS);
+}
+
+/** Redraw the countdown. Touches nothing on chain, so it is free. */
+function armCountdown() {
+  clearTimeout(live.countdown);
+  live.countdown = null;
+  if (!live.enabled || document.hidden) return renderLiveNow();
+  live.countdown = setTimeout(() => {
+    renderLiveNow();
+    armCountdown();
+  }, COUNTDOWN_TICK_MS);
+  renderLiveNow();
+}
+
+function scheduleLive() {
+  if (!live.enabled) {
+    clearTimeout(live.timer);
+    clearTimeout(live.countdown);
+    live.timer = null;
+    live.countdown = null;
+    return renderLiveNow();
+  }
+  // Stopped while hidden: resumed by the visibilitychange handler, which also reads
+  // at once rather than waiting out the interval.
+  if (document.hidden) {
+    clearTimeout(live.timer);
+    clearTimeout(live.countdown);
+    live.timer = null;
+    live.countdown = null;
+    return renderLiveNow();
+  }
+  armReadTimer();
+  armCountdown();
+}
+
+/** Read now, then carry on with the schedule. */
+async function refreshNow() {
+  await refresh({ silent: true });
+  scheduleLive();
+}
+
+/**
+ * Turn the timer on or off.
+ *
+ * RESUMING READS IMMEDIATELY. An earlier version only re-armed the next tick, so
+ * pressing Live after a pause left the page showing stale numbers for up to a full
+ * interval -- at precisely the moment the user had asked it to be current. The same
+ * applies to coming back to a hidden tab, which is the same wish expressed by
+ * switching windows instead of pressing a button.
+ */
+function setLive(enabled) {
+  live.enabled = enabled;
+  const button = el('live-button');
+  button.setAttribute('aria-pressed', String(enabled));
+  button.className = enabled ? 'secondary' : 'secondary off';
+  if (enabled) refreshNow();
+  else scheduleLive();
+}
+
+/**
+ * Stop every timer.
+ *
+ * Nothing in the page calls this -- the page lives as long as the tab does. It
+ * exists because a self-rescheduling timer chain keeps a process alive, so any
+ * harness that loads this module (the render tests do) would otherwise hang forever
+ * rather than finish. A page that cannot be stopped is also a page that cannot be
+ * tested, which is reason enough on its own.
+ */
+export function stopLive() {
+  live.enabled = false;
+  clearTimeout(live.timer);
+  clearTimeout(live.countdown);
+  live.timer = null;
+  live.countdown = null;
+}
+
+function wireLive() {
+  el('live-button').addEventListener('click', () => setLive(!live.enabled));
+
+  // Coming back to the tab: read at once, then resume the timer. `visibilitychange`
+  // is the reliable one; `focus` covers the case of switching windows without the
+  // document ever becoming hidden.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearTimeout(live.timer);
+      clearTimeout(live.countdown);
+      renderLiveNow();
+      return;
+    }
+    refreshNow();
+  });
+  window.addEventListener('focus', () => {
+    // Only if the last read is old enough to be worth repeating, or every click on
+    // the window would fire a request.
+    if (live.enabled && Date.now() - (live.lastAt?.getTime() ?? 0) > LIVE_INTERVAL_MS) refreshNow();
+  });
+
+  setLive(true);
+}
+
 /** Re-read everything the page shows. One read, so the figures cannot disagree. */
 async function refresh({ silent = false } = {}) {
   const account = app.wallet?.state.account ?? null;
+
+  // One read at a time. The timer, the visibility handler, the focus handler and the
+  // Refresh button can all ask for a read, and two overlapping reads would race to
+  // write the same DOM -- the later one winning with the earlier one's data.
+  if (app.reading) return;
+  app.reading = true;
 
   try {
     // `account: null` is not a degraded read: the vault's totals do not depend on
@@ -86,13 +263,12 @@ async function refresh({ silent = false } = {}) {
     // With no account connected they are all zero, and "you hold none" would be a
     // claim about a person the page has not met.
     renderState(state, { stale: false, hasAccount: Boolean(account) });
-    // Refresh re-reads and redraws; when nothing changed on chain the pixels are
-    // identical, so this line is the only evidence the press did anything.
-    renderLastRead(new Date());
+    live.lastAt = new Date();
+    live.lastFailed = false;
   } catch (err) {
-    // A failed read must never look like a fresh one: the timestamp is replaced by
-    // a warning, so "the chain went away" cannot be mistaken for "nothing changed".
-    renderLastRead(new Date(), { failed: true });
+    // A failed read must never look like a fresh one. The indicator switches to a
+    // warning, so "the chain went away" cannot be mistaken for "nothing changed".
+    live.lastFailed = true;
     if (!silent) {
       if (app.lastState) {
         renderState(app.lastState, { stale: true, hasAccount: Boolean(account) });
@@ -101,6 +277,9 @@ async function refresh({ silent = false } = {}) {
         renderMessage({ tone: 'error', title: 'Cannot read the vault', detail: `${err?.shortMessage ?? err?.message ?? err}\n\nIf this is the local chain, is anvil still running?` });
       }
     }
+  } finally {
+    app.reading = false;
+    renderLiveNow();
   }
   syncControls();
 }
@@ -557,6 +736,9 @@ function wireControls() {
   for (const id of ['deposit-amount', 'redeem-amount']) {
     el(id).addEventListener('input', syncControls);
   }
+
+  // Starts the timer, the countdown, and the pause button.
+  wireLive();
 }
 
 async function start() {

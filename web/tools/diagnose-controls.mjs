@@ -155,6 +155,46 @@ try {
   await new Promise((r) => setTimeout(r, 600));
   log('AFTER typing an amount', await browser.evaluate(PROBE));
 
+  // ==========================================================================
+  // Why does the page read the chain repeatedly and never change its figures?
+  // The indicator's countdown ticks, and the wallet records dozens of eth_calls,
+  // so the timer runs and the reads happen. Ask the PAGE what it got.
+  // ==========================================================================
+  console.log('');
+  console.log('--- what the page actually reads ---');
+  const reads = await browser.evaluate(`(async () => {
+    const before = document.getElementById('total-assets').textContent;
+    const calls = window.__walletLog.filter((c) => c.method === 'eth_call').length;
+    await new Promise((r) => setTimeout(r, 12000));
+    const after = window.__walletLog.filter((c) => c.method === 'eth_call').length;
+    return {
+      totalAssetsBefore: before,
+      totalAssetsAfter: document.getElementById('total-assets').textContent,
+      callsBefore: calls,
+      callsAfter: after,
+      lastReadStatus: document.getElementById('live-status').textContent,
+      message: document.getElementById('message').textContent.slice(0, 120),
+    };
+  })()`);
+  console.log(JSON.stringify(reads, null, 2).split('\n').map((l) => '  ' + l).join('\n'));
+
+  console.log('');
+  console.log('--- what the fake wallet returns for totalAssets() directly ---');
+  const direct = await browser.evaluate(`(async () => {
+    const res = await window.ethereum.request({ method: 'eth_call', params: [{ to: ${JSON.stringify(config.vault)}, data: '0x01e1d114' }, 'latest'] });
+    return { raw: res, asBigInt: BigInt(res).toString() };
+  })()`);
+  console.log(JSON.stringify(direct, null, 2).split('\n').map((l) => '  ' + l).join('\n'));
+
+  console.log('');
+  console.log('--- and what the chain says, from Node ---');
+  const rpcRes = await (await fetch(RPC, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: config.vault, data: '0x01e1d114' }, 'latest'] }),
+  })).json();
+  console.log(`  node says: ${BigInt(rpcRes.result).toString()}`);
+
   console.log('');
   console.log('--- clicking Refresh (must prove it did something) ---');
   const beforeRefresh = await browser.evaluate(`document.getElementById('last-read').textContent`);

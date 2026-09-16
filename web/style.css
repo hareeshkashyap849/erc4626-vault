@@ -134,14 +134,59 @@ code {
 }
 
 .last-read {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 6px 0 0;
   font-size: 11px;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
-.last-read.stale {
-  color: var(--warn);
+/* The dot is the part a reader notices without reading. Three states, three
+   colours -- a live page, a paused one and a stale one must never look alike. */
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+
+.live-dot.live {
+  background: var(--ok);
+  /* Only the live state pulses. A pulse on a paused page would be a lie, and a
+     pulse on a stale one would be the worst kind of lie. */
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+.live-dot.paused {
+  background: var(--neutral);
+}
+
+.live-dot.stale {
+  background: var(--error);
+}
+
+button.secondary.off {
+  border-color: var(--neutral);
+  color: var(--muted);
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot.live {
+    animation: none;
+  }
 }
 
 /* ----------------------------------------------------------------- buttons */

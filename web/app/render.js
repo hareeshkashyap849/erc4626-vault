@@ -285,30 +285,40 @@ export function renderBusy(busy, stage = '') {
 }
 
 /**
- * Say when the figures were last read from the chain.
+ * The "live / paused / stale" indicator.
  *
- * WHY THIS IS NOT DECORATION
+ * Three states, and they must not look alike, because the whole point of the
+ * indicator is that a reader can tell at a glance whether the figures in front of
+ * them are current:
  *
- * Refresh re-reads every figure from the chain and redraws them. When nothing has
- * changed on chain, the redraw produces identical pixels -- so "the button worked"
- * and "the button is dead" look exactly the same. A real user pressed Refresh,
- * saw nothing move, and reasonably concluded the page was unfinished.
- *
- * A timestamp is the smallest thing that distinguishes the two, and it is also
- * true rather than a spinner that lies: the page genuinely did read the chain at
- * that moment.
+ *   live    reading on a timer; says when the last read happened and when the next
+ *           one is due, so "nothing has changed on chain" cannot look like a freeze
+ *   paused  the user turned it off; says so, and says how to turn it back on
+ *   stale   the last read FAILED; says so in the warning colour, because a page
+ *           showing old numbers without saying they are old is the failure this
+ *           whole line exists to prevent
  */
-export function renderLastRead(at = new Date(), { failed = false } = {}) {
-  const node = el('last-read');
-  if (!node) return;
-  if (failed) {
-    // A failed read must not look like a fresh one.
-    node.textContent = 'could not read the chain just now — the figures above may be out of date';
-    node.className = 'last-read stale';
+export function renderLive({ mode = 'live', at = null, nextInMs = null, detail = '' } = {}) {
+  const dot = el('live-dot');
+  const status = el('live-status');
+  if (!dot || !status) return;
+
+  dot.className = `live-dot ${mode}`;
+
+  if (mode === 'stale') {
+    status.textContent = detail || 'lost contact with the chain — the figures above may be out of date';
     return;
   }
-  node.textContent = `figures read from the chain at ${at.toLocaleTimeString()}`;
-  node.className = 'last-read';
+
+  const when = at ? at.toLocaleTimeString() : null;
+  if (mode === 'paused') {
+    status.textContent = `${when ? `read at ${when} · ` : ''}live updates paused — press Live to resume`;
+    return;
+  }
+
+  // `Math.ceil` so it never reads "in 0s" while still waiting.
+  const due = nextInMs === null ? '' : ` · next in ${Math.max(1, Math.ceil(nextInMs / 1000))}s`;
+  status.textContent = `${when ? `read at ${when}` : 'reading…'}${due}`;
 }
 
 /**

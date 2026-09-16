@@ -139,6 +139,28 @@ class StubNode {
     this.listeners.get(type).push(fn);
   }
 
+  /**
+   * Attributes, backed by a map instead of the property bag.
+   *
+   * `hidden` and `disabled` are real content attributes on a browser element, but
+   * they are also reflected as properties -- so this stub deliberately keeps them
+   * as properties and stores everything ELSE here. That way `aria-pressed` survives
+   * a round trip without pretending the reflected ones work differently from how
+   * the rest of this file already tests them.
+   */
+  setAttribute(name, value) {
+    if (!this.attributes) this.attributes = new Map();
+    this.attributes.set(name, String(value));
+  }
+
+  getAttribute(name) {
+    return this.attributes?.get(name) ?? null;
+  }
+
+  hasAttribute(name) {
+    return this.attributes?.has(name) ?? false;
+  }
+
   /** How many handlers are attached. Used to prove a button is not inert. */
   listenerCount(type) {
     return (this.listeners.get(type) ?? []).length;
@@ -175,6 +197,21 @@ function makeDom() {
       return elements.get(id) ?? null;
     },
     createElement: (tag) => new StubNode(tag),
+    // The live-update loop reads `document.hidden` and subscribes to
+    // `visibilitychange`. The stub lacked both, so `start()` threw and the page
+    // reported "The page failed to start" instead of the missing-wallet message --
+    // a test double that is LESS capable than the real object fails just as
+    // misleadingly as one that is more capable.
+    hidden: false,
+    listeners: new Map(),
+    addEventListener(type, fn) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(fn);
+    },
+    removeEventListener(type, fn) {
+      const list = this.listeners.get(type);
+      if (list) list.splice(list.indexOf(fn), 1);
+    },
   };
 
   return { document, elements, known };
@@ -207,6 +244,46 @@ const BROWSER_GLOBALS = {
 };
 
 /**
+ * Timers that can be stopped.
+ *
+ * `main.js` now runs a self-rescheduling timer chain for live updates. Left alone
+ * that keeps the test process alive forever -- the suite did not fail, it hung until
+ * the harness killed it, which is a much worse signal than a failure. `stopTimers`
+ * cancels everything a load created, and the loading helpers below call it from
+ * their returned `stop()`.
+ */
+function makeTimers() {
+  const pending = new Set();
+  return {
+    setTimeout: (fn, ms) => {
+      const id = setTimeout(fn, ms);
+      pending.add(id);
+      return id;
+    },
+    clearTimeout: (id) => {
+      pending.delete(id);
+      clearTimeout(id);
+    },
+    setInterval: (fn, ms) => {
+      const id = setInterval(fn, ms);
+      pending.add(id);
+      return id;
+    },
+    clearInterval: (id) => {
+      pending.delete(id);
+      clearInterval(id);
+    },
+    stopAll: () => {
+      for (const id of pending) {
+        clearTimeout(id);
+        clearInterval(id);
+      }
+      pending.clear();
+    },
+  };
+}
+
+/**
  * Load the real render.js with the DOM stub installed as its globals.
  *
  * `vm.Script` cannot do this: render.js has an `import`, so a plain Script throws
@@ -220,11 +297,14 @@ const BROWSER_GLOBALS = {
  */
 async function loadRender() {
   const dom = makeDom();
+  const timers = makeTimers();
   const context = vm.createContext({
     document: dom.document,
     console,
-    setTimeout,
-    clearTimeout,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    setInterval: timers.setInterval,
+    clearInterval: timers.clearInterval,
     URL,
     location: { origin: 'http://127.0.0.1:5173' },
   });
@@ -253,7 +333,7 @@ async function loadRender() {
   });
   await root.evaluate();
 
-  return { dom, render: context.__exports };
+  return { dom, render: context.__exports, stopTimers: timers.stopAll };
 }
 
 /** A representative read state: 12.5 mUSDC in a vault holding 100. */
@@ -273,8 +353,9 @@ const STATE = {
 
 // --------------------------------------------------------------------- tests
 
-test('renderState writes every figure, formatted with the right decimals', async () => {
-  const { dom, render } = await loadRender();
+test('renderState writes every figure, formatted with the right decimals', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderState(STATE, { symbol: 'mUSDC' });
 
   const text = (id) => dom.elements.get(id).visibleText;
@@ -299,8 +380,9 @@ test('renderState writes every figure, formatted with the right decimals', async
  * itself -- which is exactly why none of them caught it: they were testing the
  * parameter rather than the page's use of it. A screenshot found it.
  */
-test('renderState uses the symbol from the read state when no option is given', async () => {
-  const { dom, render } = await loadRender();
+test('renderState uses the symbol from the read state when no option is given', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   // No options at all, which is what main.js does.
   render.renderState(STATE);
@@ -317,8 +399,9 @@ test('renderState uses the symbol from the read state when no option is given', 
  * with the asset's decimals shows a number 10^12 times too small. Both halves are
  * asserted here because the bug looks plausible either way.
  */
-test('renderState does not format shares with the asset decimals', async () => {
-  const { dom, render } = await loadRender();
+test('renderState does not format shares with the asset decimals', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderState(STATE, { symbol: 'mUSDC' });
 
   const shares = dom.elements.get('share-balance').visibleText;
@@ -329,8 +412,9 @@ test('renderState does not format shares with the asset decimals', async () => {
   assert.ok(wrong.startsWith('87.5'), 'the asset balance is a different number in different units');
 });
 
-test('renderState with an empty vault says so instead of showing a price', async () => {
-  const { dom, render } = await loadRender();
+test('renderState with an empty vault says so instead of showing a price', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderState({ ...STATE, sharePrice: null, totalAssets: 0n, totalSupply: 0n, shares: 0n }, { symbol: 'mUSDC' });
 
   const price = dom.elements.get('share-price').visibleText;
@@ -338,8 +422,9 @@ test('renderState with an empty vault says so instead of showing a price', async
   assert.doesNotMatch(price, /1\.0/, 'showing 1.0 would invent a price');
 });
 
-test('renderState marks stale figures when told they are stale', async () => {
-  const { dom, render } = await loadRender();
+test('renderState marks stale figures when told they are stale', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderState(STATE, { symbol: 'mUSDC', stale: false });
   assert.equal(dom.elements.get('stale-marker').hidden, true, 'fresh figures carry no marker');
@@ -351,8 +436,9 @@ test('renderState marks stale figures when told they are stale', async () => {
   assert.equal(dom.elements.get('wallet-balance').visibleText, '87.5 mUSDC', 'the last known figure is still shown');
 });
 
-test('renderAccount shows the full address and flags not-connected', async () => {
-  const { dom, render } = await loadRender();
+test('renderAccount shows the full address and flags not-connected', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   const address = '0xa0Ee7A142d267C1f36714E4a8F75612F20a79720';
 
   render.renderAccount(address);
@@ -365,8 +451,9 @@ test('renderAccount shows the full address and flags not-connected', async () =>
   assert.match(dom.elements.get('account').className, /disconnected/);
 });
 
-test('renderChain accepts the expected chain and names the actual one when wrong', async () => {
-  const { dom, render } = await loadRender();
+test('renderChain accepts the expected chain and names the actual one when wrong', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderChain({ chainId: 31337, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: true });
   assert.match(dom.elements.get('chain').className, /ok/);
@@ -393,8 +480,9 @@ test('renderChain accepts the expected chain and names the actual one when wrong
  * the static markup in index.html showed a permanent "Wrong network" warning.
  * The page opened looking broken.
  */
-test('renderChain does not claim a wrong network when nothing is connected', async () => {
-  const { dom, render } = await loadRender();
+test('renderChain does not claim a wrong network when nothing is connected', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderChain({ chainId: null, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: false });
 
@@ -404,8 +492,9 @@ test('renderChain does not claim a wrong network when nothing is connected', asy
   assert.match(dom.elements.get('chain').visibleText, /not connected/i);
 });
 
-test('renderChain treats an unknown chain as unknown even when connected', async () => {
-  const { dom, render } = await loadRender();
+test('renderChain treats an unknown chain as unknown even when connected', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   // A wallet that reports no chain id at all: we cannot call it wrong, and we
   // cannot call it right.
@@ -414,8 +503,9 @@ test('renderChain treats an unknown chain as unknown even when connected', async
   assert.doesNotMatch(dom.elements.get('chain').className, /bad/);
 });
 
-test('renderChain hides the guard when the wallet moves from wrong to right', async () => {
-  const { dom, render } = await loadRender();
+test('renderChain hides the guard when the wallet moves from wrong to right', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderChain({ chainId: 1, expectedChainId: 31337, expectedChainName: 'Anvil Local', connected: true });
   assert.equal(dom.elements.get('wrong-chain-guard').hidden, false);
@@ -433,8 +523,9 @@ test('renderChain hides the guard when the wallet moves from wrong to right', as
  * rather than by reading the classify() table, because the tone has to survive
  * the whole path from classification to DOM.
  */
-test('a user rejection is rendered neutrally, not as an error', async () => {
-  const { dom, render } = await loadRender();
+test('a user rejection is rendered neutrally, not as an error', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderMessage({ tone: 'neutral', title: 'Cancelled', detail: 'You rejected the request in your wallet.' });
 
@@ -445,8 +536,9 @@ test('a user rejection is rendered neutrally, not as an error', async () => {
   assert.match(message.visibleText, /Cancelled/);
 });
 
-test('an error message can carry a transaction hash and an explorer link', async () => {
-  const { dom, render } = await loadRender();
+test('an error message can carry a transaction hash and an explorer link', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   const hash = `0x${'ab'.repeat(32)}`;
 
   render.renderMessage({ tone: 'error', title: 'Reverted', hash, explorerUrl: 'https://basescan.org' });
@@ -463,8 +555,9 @@ test('an error message can carry a transaction hash and an explorer link', async
   assert.match(dom.elements.get('message').visibleText, new RegExp(hash.slice(0, 10)));
 });
 
-test('clearMessage hides and empties the message', async () => {
-  const { dom, render } = await loadRender();
+test('clearMessage hides and empties the message', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderMessage({ tone: 'error', title: 'Failed' });
   assert.equal(dom.elements.get('message').hidden, false);
 
@@ -513,7 +606,7 @@ test('clearMessage hides and empties the message', async () => {
  * problems: it cannot be fooled by stub fidelity, and it fails the moment someone
  * writes the line again.
  */
-test('no module mutates children directly, because children is read-only in a browser', async () => {
+test('no module mutates children directly, because children is read-only in a browser', async (t) => {
   const offenders = [];
   for (const name of ['render.js', 'main.js', 'vault.js', 'wallet.js']) {
     const source = readFileSync(resolve(REPO, 'web', 'app', name), 'utf8');
@@ -534,8 +627,9 @@ test('no module mutates children directly, because children is read-only in a br
   assert.deepEqual(offenders, [], `children is read-only in a browser; empty a node with removeChild in a loop instead:\n${offenders.join('\n')}`);
 });
 
-test('clearing and re-rendering a message never throws, whatever it contained', async () => {
-  const { dom, render } = await loadRender();
+test('clearing and re-rendering a message never throws, whatever it contained', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   const hash = `0x${'cd'.repeat(32)}`;
 
   // Every shape of message the page can produce, cleared between each. The bug
@@ -562,8 +656,9 @@ test('clearing and re-rendering a message never throws, whatever it contained', 
   assert.equal(dom.elements.get('message').className, 'message');
 });
 
-test('renderControls disables with a reason rather than silently', async () => {
-  const { dom, render } = await loadRender();
+test('renderControls disables with a reason rather than silently', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   const hint = () => dom.elements.get('control-hint').visibleText;
 
   render.renderControls({ connected: false, correctChain: false, busy: false, amountIsValid: true, sharesToRedeem: true });
@@ -589,8 +684,9 @@ test('renderControls disables with a reason rather than silently', async () => {
   assert.equal(hint(), '', 'nothing to explain when nothing is blocked');
 });
 
-test('renderControls shows the caller-supplied hint when not otherwise blocked', async () => {
-  const { dom, render } = await loadRender();
+test('renderControls shows the caller-supplied hint when not otherwise blocked', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true, hint: 'the vault can pay out 1 right now' });
   assert.match(dom.elements.get('control-hint').visibleText, /pay out 1/);
 });
@@ -602,8 +698,9 @@ test('renderControls shows the caller-supplied hint when not otherwise blocked',
  *
  * "No wallet" must be a state the page explains, not a state in which it stops.
  */
-test('renderControls names a missing wallet rather than only a missing connection', async () => {
-  const { dom, render } = await loadRender();
+test('renderControls names a missing wallet rather than only a missing connection', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderControls({ hasWallet: false, connected: false, correctChain: false, busy: false, amountIsValid: true, sharesToRedeem: true });
 
@@ -614,8 +711,9 @@ test('renderControls names a missing wallet rather than only a missing connectio
   assert.equal(dom.elements.get('redeem-button').disabled, true);
 });
 
-test('renderControls prefers the most fundamental missing thing', async () => {
-  const { dom, render } = await loadRender();
+test('renderControls prefers the most fundamental missing thing', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   // No wallet AND not connected AND wrong chain: the hint must name the wallet,
   // because that is the thing to fix first.
@@ -631,8 +729,9 @@ test('renderControls prefers the most fundamental missing thing', async () => {
   assert.match(dom.elements.get('control-hint').visibleText, /network/i);
 });
 
-test('renderControls defaults hasWallet to true so an old call site still works', async () => {
-  const { dom, render } = await loadRender();
+test('renderControls defaults hasWallet to true so an old call site still works', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   // Not defensive coding for its own sake: a caller that forgets the flag should
   // see the page behave as before, not be told a wallet is missing.
   render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true });
@@ -650,8 +749,9 @@ test('renderControls defaults hasWallet to true so an old call site still works'
  * An empty amount box is the normal RESTING state. The hint has to say what to do
  * next, not what the user failed to do.
  */
-test('renderControls describes the empty input instead of scolding the user', async () => {
-  const { dom, render } = await loadRender();
+test('renderControls describes the empty input instead of scolding the user', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: false, sharesToRedeem: false });
   const hint = dom.elements.get('control-hint').visibleText;
@@ -662,8 +762,9 @@ test('renderControls describes the empty input instead of scolding the user', as
   assert.equal(dom.elements.get('deposit-button').disabled, true, 'the button is still correctly disabled');
 });
 
-test('renderControls distinguishes BLOCKED from NOT READY', async () => {
-  const { dom, render } = await loadRender();
+test('renderControls distinguishes BLOCKED from NOT READY', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   // Blocked: nothing the user types will help, so the hint must not mention typing.
   render.renderControls({ hasWallet: false, connected: false, correctChain: false, busy: false, amountIsValid: false, sharesToRedeem: false });
@@ -686,8 +787,9 @@ test('renderControls distinguishes BLOCKED from NOT READY', async () => {
   assert.equal(dom.elements.get('control-hint').visibleText, '');
 });
 
-test('renderControls points at the Redeem box when only that one is empty', async () => {
-  const { dom, render } = await loadRender();
+test('renderControls points at the Redeem box when only that one is empty', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: false });
   const hint = dom.elements.get('control-hint').visibleText;
   assert.match(hint, /redeem/i, `expected a hint about the Redeem box, got "${hint}"`);
@@ -695,26 +797,44 @@ test('renderControls points at the Redeem box when only that one is empty', asyn
 
 /**
  * @dev Refresh looked dead because a successful re-read with no chain changes
- * produces identical pixels. A real user pressed it, saw nothing move, and asked
- * whether the page was finished.
+ * produces identical pixels. The indicator now has three states, and they must be
+ * visually distinct -- a live page, a paused one and a stale one looking alike is
+ * the same failure in a new costume.
  */
-test('renderLastRead proves a refresh happened, and never looks fresh after a failure', async () => {
-  const { dom, render } = await loadRender();
+test('renderLive distinguishes live, paused and stale', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
-  render.renderLastRead(new Date('2026-09-16T10:20:30'));
-  const ok = dom.elements.get('last-read');
-  assert.match(ok.visibleText, /read from the chain at/, `expected a timestamp, got "${ok.visibleText}"`);
-  assert.doesNotMatch(ok.className, /stale/);
+  render.renderLive({ mode: 'live', at: new Date('2026-09-16T10:20:30'), nextInMs: 3200 });
+  const liveStatus = dom.elements.get('live-status').visibleText;
+  assert.match(liveStatus, /read at/, `expected a timestamp, got "${liveStatus}"`);
+  assert.match(liveStatus, /next in 4s/, `expected a countdown, got "${liveStatus}"`);
+  assert.match(dom.elements.get('live-dot').className, /live/);
 
-  render.renderLastRead(new Date(), { failed: true });
-  const failed = dom.elements.get('last-read');
-  assert.match(failed.visibleText, /could not read/i, 'a failure must say so');
-  assert.match(failed.className, /stale/);
-  assert.doesNotMatch(failed.visibleText, /read from the chain at/, 'a failure must NOT look like a successful read');
+  render.renderLive({ mode: 'paused', at: new Date('2026-09-16T10:20:30') });
+  const pausedStatus = dom.elements.get('live-status').visibleText;
+  assert.match(pausedStatus, /paused/, `expected it to say it is paused, got "${pausedStatus}"`);
+  assert.match(dom.elements.get('live-dot').className, /paused/);
+  assert.doesNotMatch(pausedStatus, /next in/, 'a paused page must not promise a next read');
+
+  render.renderLive({ mode: 'stale' });
+  const staleStatus = dom.elements.get('live-status').visibleText;
+  assert.match(staleStatus, /lost contact|could not/i, `expected a warning, got "${staleStatus}"`);
+  assert.match(dom.elements.get('live-dot').className, /stale/);
+  assert.doesNotMatch(staleStatus, /read at/, 'a failed read must NOT look like a successful one');
 });
 
-test('renderBusy toggles the indicator and does not touch the buttons', async () => {
-  const { dom, render } = await loadRender();
+test('renderLive never promises a next read sooner than one second', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
+  // `Math.ceil` would read "next in 0s" while still waiting, which looks stuck.
+  render.renderLive({ mode: 'live', at: new Date(), nextInMs: 1 });
+  assert.match(dom.elements.get('live-status').visibleText, /next in 1s/, 'never "0s"');
+});
+
+test('renderBusy toggles the indicator and does not touch the buttons', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderBusy(true, 'waiting for the deposit prompt');
   assert.equal(dom.elements.get('busy').hidden, false);
@@ -733,8 +853,9 @@ test('renderBusy toggles the indicator and does not touch the buttons', async ()
  * two different functions decided the same thing. renderBusy now only draws the
  * indicator, and renderControls is the single owner of the disabled state.
  */
-test('renderBusy(false) does not leave the buttons disabled', async () => {
-  const { dom, render } = await loadRender();
+test('renderBusy(false) does not leave the buttons disabled', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   render.renderControls({ connected: true, correctChain: true, busy: true, amountIsValid: true, sharesToRedeem: true });
   assert.equal(dom.elements.get('deposit-button').disabled, true);
@@ -752,8 +873,9 @@ test('renderBusy(false) does not leave the buttons disabled', async () => {
  * depositor, so 268 beside 768 looked like a contradiction rather than a slice
  * beside a whole.
  */
-test('renderState says what fraction of the vault the user owns', async () => {
-  const { dom, render } = await loadRender();
+test('renderState says what fraction of the vault the user owns', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   // 268 of 768 shares.
   const held = 268n * 10n ** 18n;
@@ -769,14 +891,16 @@ test('renderState says what fraction of the vault the user owns', async () => {
   assert.notEqual(dom.elements.get('share-balance').visibleText, dom.elements.get('total-supply').visibleText);
 });
 
-test('renderState stays silent about a share of the vault when nothing is connected', async () => {
-  const { dom, render } = await loadRender();
+test('renderState stays silent about a share of the vault when nothing is connected', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderState({ ...STATE, shares: 0n, totalSupply: 100n * 10n ** 18n }, { hasAccount: false });
   assert.equal(dom.elements.get('share-percent').visibleText, '', 'the page does not know whose slice to describe');
 });
 
-test('renderState distinguishes "none" from a rounding artefact', async () => {
-  const { dom, render } = await loadRender();
+test('renderState distinguishes "none" from a rounding artefact', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
 
   // Connected, holding nothing: the vault belongs to other people.
   render.renderState({ ...STATE, shares: 0n, totalSupply: 768n * 10n ** 18n }, { hasAccount: true });
@@ -789,14 +913,16 @@ test('renderState distinguishes "none" from a rounding artefact', async () => {
   assert.doesNotMatch(tiny, /^\(0\.00%/, 'that would be a rounding artefact presented as a holding');
 });
 
-test('renderState says nothing about a share when the vault is empty', async () => {
-  const { dom, render } = await loadRender();
+test('renderState says nothing about a share when the vault is empty', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderState({ ...STATE, shares: 0n, totalSupply: 0n, totalAssets: 0n }, { hasAccount: true });
   assert.equal(dom.elements.get('share-percent').visibleText, '', 'there is no fraction of nothing');
 });
 
-test('renderDeployment shows the full addresses and the block', async () => {
-  const { dom, render } = await loadRender();
+test('renderDeployment shows the full addresses and the block', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderDeployment({
     vault: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0',
     asset: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
@@ -813,21 +939,24 @@ test('renderDeployment shows the full addresses and the block', async () => {
   assert.match(dom.elements.get('deployment-note').visibleText, /disposable/);
 });
 
-test('renderDeployment says "unknown" for a record with no deployBlock', async () => {
-  const { dom, render } = await loadRender();
+test('renderDeployment says "unknown" for a record with no deployBlock', async (t) => {
+  const { dom, render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   render.renderDeployment({ vault: '0x1', asset: '0x2', chainId: 1 });
   assert.equal(dom.elements.get('deploy-block').textContent, 'unknown', 'a missing block must not render as "undefined"');
 });
 
-test('el() throws on an id that does not exist, rather than returning undefined', async () => {
-  const { render } = await loadRender();
+test('el() throws on an id that does not exist, rather than returning undefined', async (t) => {
+  const { render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   assert.throws(() => render.el('no-such-element'), /missing element #no-such-element/);
 });
 
-test('every function render.js exports is callable with a complete argument', async () => {
+test('every function render.js exports is callable with a complete argument', async (t) => {
   // A cheap guard against a function that is exported but never exercised above:
   // an uncaught TypeError here is a blank page in a browser.
-  const { render } = await loadRender();
+  const { render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   const calls = {
     el: () => render.el('message'),
     setText: () => render.setText('message', 'x'),
@@ -839,7 +968,7 @@ test('every function render.js exports is callable with a complete argument', as
     clearMessage: () => render.clearMessage(),
     renderControls: () => render.renderControls({ connected: true, correctChain: true, busy: false, amountIsValid: true, sharesToRedeem: true }),
     renderBusy: () => render.renderBusy(false),
-    renderLastRead: () => render.renderLastRead(new Date()),
+    renderLive: () => render.renderLive({ mode: 'live', at: new Date(), nextInMs: 1000 }),
     renderDeployment: () => render.renderDeployment({ chainId: 1 }),
   };
 
@@ -850,8 +979,9 @@ test('every function render.js exports is callable with a complete argument', as
   }
 });
 
-test('shortenAddress keeps short strings intact instead of mangling them', async () => {
-  const { render } = await loadRender();
+test('shortenAddress keeps short strings intact instead of mangling them', async (t) => {
+  const { render, stopTimers } = await loadRender();
+  t.after(stopTimers);
   assert.equal(render.shortenAddress('0x1234'), '0x1234');
   assert.equal(render.shortenAddress(null), '');
   assert.equal(render.shortenAddress('0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'), '0xa0Ee…9720');
@@ -876,6 +1006,7 @@ test('shortenAddress keeps short strings intact instead of mangling them', async
 /** Load main.js with the DOM stub, a stubbed fetch, and an optional wallet. */
 async function loadMain({ ethereum = null, config = null } = {}) {
   const dom = makeDom();
+  const timers = makeTimers();
   const fetchStub = async (url) => {
     const path = String(url);
     if (path.endsWith('/api/config')) {
@@ -910,10 +1041,10 @@ async function loadMain({ ethereum = null, config = null } = {}) {
     document: dom.document,
     fetch: fetchStub,
     console,
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    setInterval: timers.setInterval,
+    clearInterval: timers.clearInterval,
     URL,
     location: { origin: 'http://127.0.0.1:5173' },
     ethereum: ethereum ?? undefined,
@@ -957,7 +1088,10 @@ async function loadMain({ ethereum = null, config = null } = {}) {
   await root.evaluate();
   for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
 
-  return { dom, window: sandbox };
+  // `stopTimers` cancels the live-update loop main.js started. Without it the
+  // self-rescheduling chain keeps the test process alive and the suite HANGS rather
+  // than failing -- which is how this was found.
+  return { dom, window: sandbox, stopTimers: timers.stopAll };
 }
 
 /** A minimal EIP-1193 provider. Counts prompts so tests can assert on them. */
@@ -983,8 +1117,9 @@ function fakeEthereum({ accounts = ['0xa0Ee7A142d267C1f36714E4a8F75612F20a79720'
   };
 }
 
-test('main.js wires the buttons even when NO wallet is present', async () => {
-  const { dom } = await loadMain({ ethereum: null });
+test('main.js wires the buttons even when NO wallet is present', async (t) => {
+  const { dom, stopTimers } = await loadMain({ ethereum: null });
+  t.after(stopTimers);
 
   // The exact failure seen in the browser: no provider, so the old code returned
   // before this line and the button had zero handlers.
@@ -998,8 +1133,9 @@ test('main.js wires the buttons even when NO wallet is present', async () => {
   }
 });
 
-test('main.js explains the missing wallet instead of failing silently', async () => {
-  const { dom } = await loadMain({ ethereum: null });
+test('main.js explains the missing wallet instead of failing silently', async (t) => {
+  const { dom, stopTimers } = await loadMain({ ethereum: null });
+  t.after(stopTimers);
 
   // A visible message, because the previous behaviour was silence.
   const message = dom.elements.get('message').visibleText;
@@ -1007,8 +1143,9 @@ test('main.js explains the missing wallet instead of failing silently', async ()
   assert.match(dom.elements.get('control-hint').visibleText, /wallet/i);
 });
 
-test('clicking Connect with no wallet says what to do rather than doing nothing', async () => {
-  const { dom } = await loadMain({ ethereum: null });
+test('clicking Connect with no wallet says what to do rather than doing nothing', async (t) => {
+  const { dom, stopTimers } = await loadMain({ ethereum: null });
+  t.after(stopTimers);
 
   await dom.elements.get('connect-button').dispatch('click');
 
@@ -1020,9 +1157,10 @@ test('clicking Connect with no wallet says what to do rather than doing nothing'
   assert.doesNotMatch(dom.elements.get('message').className, /\berror\b/, 'a missing wallet is not an error the user caused');
 });
 
-test('main.js attaches the wallet when one IS present, and reads state after connecting', async () => {
+test('main.js attaches the wallet when one IS present, and reads state after connecting', async (t) => {
   const ethereum = fakeEthereum();
-  const { dom } = await loadMain({ ethereum });
+  const { dom, stopTimers } = await loadMain({ ethereum });
+  t.after(stopTimers);
 
   await dom.elements.get('connect-button').dispatch('click');
 

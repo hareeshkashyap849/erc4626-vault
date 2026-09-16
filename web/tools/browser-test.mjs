@@ -205,6 +205,8 @@ const SEL = {
   totalSupply: '0x18160ddd',
   balanceOf: '0x70a08231',
   symbol: '0x95d89b41',
+  approve: '0x095ea7b3',
+  deposit: '0x6e553f65',
 };
 const pad = (hex) => String(hex).replace(/^0x/, '').padStart(64, '0');
 
@@ -676,6 +678,127 @@ async function main() {
     })`);
     has('redeeming everything succeeds', redeemed.message, 'confirmed');
     eq('...and the shares are gone', redeemed.shares, '0');
+
+    // ==================================================================
+    // LIVE UPDATES: the page must notice a change made by SOMEBODY ELSE.
+    //
+    // This is the whole reason for polling. Wallet events cover the user's own
+    // wallet and nothing else, so a deposit by another holder, a redemption, or a
+    // reported yield is invisible to this page unless it goes and looks. A user
+    // asked for this after finding the manual Refresh tedious -- and for a vault,
+    // stale figures are not merely tedious, they are wrong.
+    //
+    // The change is made here, from Node, directly on the chain: the page has no
+    // involvement in it at all, which is exactly the point.
+    // ==================================================================
+    console.log('');
+    console.log('--- live updates: another holder deposits, the page notices by itself ---');
+
+    // First subtract enough that there is room for a fresh deposit.
+    const beforeLive = await browser.evaluate(`document.getElementById('total-assets').textContent`);
+    const liveIndicator = await browser.evaluate(`({
+      status: document.getElementById('live-status').textContent,
+      dot: document.getElementById('live-dot').className,
+    })`);
+    has('the page says it is reading on a timer', liveIndicator.status, 'next in');
+    has('...and the indicator is in the live state', liveIndicator.dot, 'live');
+
+    // Somebody else -- the seeded holder -- deposits. This does NOT go through the
+    // page at all.
+    //
+    // THE ASSERTION IS "PAGE EQUALS CHAIN", NOT "CHAIN WENT UP BY N". An earlier
+    // version asserted the exact delta and failed with 550 -> 818 for a 10-token
+    // deposit, because this chain is NOT a private fixture: a person can be clicking
+    // the page in a browser while the test runs, and then the totals move for
+    // reasons the test did not cause. Comparing the page against the chain is true
+    // regardless of who else is transacting, which is what makes it a real assertion
+    // rather than a snapshot of one quiet moment.
+    const OTHER = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+    const TOPUP = 10n * 10n ** 6n;
+
+    const approveHash = await rpc('eth_sendTransaction', [{ from: OTHER, to: config.asset, data: SEL.approve + pad(config.vault) + pad(TOPUP) }]);
+    const otherHash = await rpc('eth_sendTransaction', [{ from: OTHER, to: config.vault, data: SEL.deposit + pad(TOPUP) + pad(OTHER) }]);
+    for (const hash of [approveHash, otherHash]) {
+      for (let i = 0; i < 60; i++) {
+        const r = await rpc('eth_getTransactionReceipt', [hash]);
+        if (r) break;
+        await new Promise((res) => setTimeout(res, 150));
+      }
+    }
+    // Both receipts are checked: the first version waited only on the deposit's
+    // hash, so it could measure the chain while the approval was still pending.
+    const approveReceipt = await rpc('eth_getTransactionReceipt', [approveHash]);
+    const otherReceipt = await rpc('eth_getTransactionReceipt', [otherHash]);
+    check(
+      'the other holder\'s deposit landed on chain',
+      approveReceipt?.status === '0x1' && otherReceipt?.status === '0x1',
+      `approve=${approveReceipt?.status} deposit=${otherReceipt?.status}`,
+    );
+
+    // NOTHING is clicked. The page must catch up on its own, and the target is
+    // whatever the chain holds NOW rather than a figure computed in advance.
+    let noticed = false;
+    let afterLive = null;
+    for (let i = 0; i < 40 && !noticed; i++) {
+      const live = await chainCall(config.vault, SEL.totalAssets);
+      const expectedText = `${formatUnits(live, 6)} ${before.symbol}`;
+      afterLive = await browser.evaluate(`document.getElementById('total-assets').textContent`);
+      noticed = afterLive === expectedText;
+      if (!noticed) await new Promise((r) => setTimeout(r, 400));
+    }
+    check(
+      'the page tracks the chain WITHOUT being clicked',
+      noticed,
+      `page says "${afterLive}"; the chain's current value is what it was compared against each pass`,
+    );
+
+    // And the pause control must actually stop it.
+    await browser.click('live-button');
+    await new Promise((r) => setTimeout(r, 400));
+    const paused = await browser.evaluate(`({
+      status: document.getElementById('live-status').textContent,
+      dot: document.getElementById('live-dot').className,
+      pressed: document.getElementById('live-button').getAttribute('aria-pressed'),
+    })`);
+    has('pressing Live pauses the updates', paused.status, 'paused');
+    has('...and says so on the indicator', paused.dot, 'paused');
+    eq('...and reports itself as not pressed', paused.pressed, 'false');
+
+    // While paused, an on-chain change must NOT appear.
+    await rpc('eth_sendTransaction', [{ from: OTHER, to: config.asset, data: SEL.approve + pad(config.vault) + pad(TOPUP) }]);
+    const pausedHash = await rpc('eth_sendTransaction', [{ from: OTHER, to: config.vault, data: SEL.deposit + pad(TOPUP) + pad(OTHER) }]);
+    for (let i = 0; i < 60; i++) {
+      const r = await rpc('eth_getTransactionReceipt', [pausedHash]);
+      if (r) break;
+      await new Promise((res) => setTimeout(res, 150));
+    }
+    // Snapshot what the page shows, wait longer than the poll interval, and require
+    // it to be UNCHANGED. Asserting "different from the chain" would pass even if
+    // the page were reading nothing at all.
+    const whilePaused = await browser.evaluate(`document.getElementById('total-assets').textContent`);
+    await new Promise((r) => setTimeout(r, 7000));
+    const stillPaused = await browser.evaluate(`document.getElementById('total-assets').textContent`);
+    eq('while paused, the page holds still', stillPaused, whilePaused);
+
+    // Resuming must catch up at once, not after another full interval.
+    const resumedAt = Date.now();
+    await browser.click('live-button');
+    let caughtUp = false;
+    let ms = null;
+    for (let i = 0; i < 25 && !caughtUp; i++) {
+      const live = await chainCall(config.vault, SEL.totalAssets);
+      const text = await browser.evaluate(`document.getElementById('total-assets').textContent`);
+      if (text === `${formatUnits(live, 6)} ${before.symbol}`) {
+        caughtUp = true;
+        ms = Date.now() - resumedAt;
+      } else {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    }
+    // Well under the 5s interval: an earlier version only re-armed the timer, so
+    // resuming left stale figures on screen for up to a whole interval -- exactly
+    // when the user had just asked for current ones.
+    check('resuming catches up at once, not after another interval', caughtUp && ms < 3000, `caught up=${caughtUp} after ${ms}ms`);
 
     // ====================================================== what the console said
     console.log('');

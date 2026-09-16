@@ -34,12 +34,18 @@
     <div class="wallet-actions">
       <button id="connect-button" type="button">Connect wallet</button>
       <button id="refresh-button" type="button" class="secondary"
-              title="Re-read every figure from the chain. If nothing has changed on chain the numbers will look identical, so the line underneath says when the read happened.">Refresh</button>
+              title="Re-read every figure from the chain now. The page also does this on its own, so this is only for impatience.">Refresh</button>
+      <button id="live-button" type="button" class="secondary" aria-pressed="true"
+              title="Pause or resume reading the chain automatically.">Live</button>
     </div>
-    <!-- Proof that Refresh did something. Without this, "read the chain and nothing
-         had changed" is indistinguishable from "the button is dead" -- which is
-         exactly the conclusion a real user drew. -->
-    <p id="last-read" class="last-read"></p>
+    <!-- The figures update on their own, so this line says when the last read
+         happened AND when the next one is due. Without it, "live" and "frozen"
+         look identical on a chain where nothing is moving -- and a user who
+         pressed Refresh and saw identical numbers concluded the page was dead. -->
+    <p id="last-read" class="last-read">
+      <span id="live-dot" class="live-dot" aria-hidden="true"></span>
+      <span id="live-status">connecting…</span>
+    </p>
   </div>
 </header>
 
