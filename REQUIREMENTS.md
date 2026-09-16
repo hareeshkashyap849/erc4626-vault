@@ -1,4 +1,4 @@
-# Requirements — base-yield-vault
+# Requirements — erc4626-vault
 
 What this project is supposed to do, how each requirement is judged, and what it
 deliberately does not do.

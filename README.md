@@ -107,6 +107,7 @@ src/YieldVault.sol              the contract
 test/MockERC20.sol              a 6-decimal ERC-20 test double
 test/YieldVault.t.sol           32 unit and fuzz tests
 test/YieldVault.invariants.t.sol  stateful handler + 9 invariants
+deployments/                    deployment records — see its README
 lib/forge-std                   vendored, v1.16.2
 lib/openzeppelin-contracts      vendored, v5.7.0
 foundry.toml                    build and fuzz configuration
@@ -116,6 +117,40 @@ medusa.json                     property-fuzzing configuration
 `lib/` is committed rather than used as a git submodule so that the build works
 with no network access. To switch to submodules, delete `lib/` and install
 `foundry-rs/forge-std@v1.16.2` and `OpenZeppelin/openzeppelin-contracts@v5.7.0`.
+
+---
+
+## Related repositories
+
+This repository is the **contract only**: Solidity, its tests, and the deployment
+records. One language, and one command to verify it.
+
+| Repository | Contains |
+|---|---|
+| **`erc4626-vault`** (this one) | The contract, its tests, the deployment script, and `deployments/` |
+| `erc4626-vault-dapp` | The TypeScript application: wallet dApp, event indexer, SQLite database, query API |
+
+The split is by **language and deployment surface**, not by "contract vs front
+end". The vault is deployed once and is then immutable, so this repository stops
+changing after P2 while the application keeps being developed. That is what makes
+"the code you are reading is the code on chain" a checkable statement rather than
+a claim: the address, the start block and the source commit are published in
+`deployments/` for the other repository to consume.
+
+---
+
+## Roadmap
+
+| Phase | Content | Repository |
+|---|---|---|
+| P1 ✅ | Contract, unit tests, invariants, static analysis, two fuzzers | this one |
+| P2 | Deploy to Base Sepolia, verify on Sourcify, fork test against real USDC, record the deployment | this one |
+| P3 | Wallet dApp: connect, deposit, withdraw, approve, and the five failure classes handled honestly | `erc4626-vault-dapp` |
+| P4 | Event indexer, SQLite snapshot, query API, scheduled refresh | `erc4626-vault-dapp` |
+
+Only P1 is complete. Nothing is deployed, and the test suite uses a mock asset
+rather than real USDC — both stated in `TESTING.md` rather than left to be
+discovered.
 
 ---
 

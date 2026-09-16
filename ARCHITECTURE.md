@@ -1,4 +1,4 @@
-# Architecture — base-yield-vault
+# Architecture — erc4626-vault
 
 How the pieces fit together, the decisions that would be expensive to reverse,
 the maths everything depends on, and the invariants the tests encode.
