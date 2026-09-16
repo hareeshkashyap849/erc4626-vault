@@ -1,0 +1,50 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+# Pinned to the exact compiler that ships with this workspace's toolchain.
+# The absolute path is deliberate: `solc-select` is broken in this environment
+# (its Python module is missing), and letting forge download a compiler would
+# make the build depend on network access.
+solc = "D:/1/11111/deepseek/web3-development/web3-development-execute/toolchain/solc/solc-0.8.37.exe"
+
+optimizer = true
+optimizer_runs = 200
+
+# The vault is ~30 lines of our own code on top of OpenZeppelin, so the stack is
+# shallow and via_ir is not needed. Recorded explicitly because "we did not need
+# it" is a design statement, not an omission.
+via_ir = false
+
+# OpenZeppelin requires at least 0.8.24 (its own pragma). 0.8.37 satisfies it.
+evm_version = "cancun"
+
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
+
+[profile.default.fuzz]
+runs = 512
+
+# The invariant suite is the point of this project, so it gets more depth than
+# the default. `depth` is the number of calls per run before the invariants are
+# re-checked; `fail_on_revert = false` lets the fuzzer take reverting paths
+# (e.g. withdrawing more than you hold) without treating them as failures --
+# reverts are expected behaviour here, not bugs.
+[profile.default.invariant]
+runs = 256
+depth = 64
+fail_on_revert = false
+
+# CI profile: same build, deeper fuzzing. Run with FOUNDRY_PROFILE=ci forge test
+[profile.ci.fuzz]
+runs = 2000
+
+[profile.ci.invariant]
+runs = 512
+depth = 128
+fail_on_revert = false

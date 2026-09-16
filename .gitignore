@@ -1,0 +1,32 @@
+# Foundry build artefacts
+out/
+cache/
+broadcast/
+
+# Dependencies are vendored deliberately (the sandbox cannot run `forge install`,
+# which shells out to git submodule). Keeping them in the repository makes the
+# build reproducible with no network access, so they are NOT ignored.
+# If you prefer submodules, delete lib/ and run:
+#   forge install foundry-rs/forge-std@v1.16.2
+#   forge install OpenZeppelin/openzeppelin-contracts@v5.7.0
+
+# Secrets. Never commit a real key: the deployment script reads
+# PRIVATE_KEY from the environment, and this file is only a template.
+.env
+.env.*
+!.env.example
+
+# Coverage output
+lcov.info
+coverage/
+
+# Python (slither / halmos)
+__pycache__/
+*.pyc
+crytic-export/
+
+# Medusa property-fuzzing corpus and crytic-compile output (regenerable)
+medusa-corpus/
+crytic-export/
+slither_results.json
+.medusa-artifact-hash

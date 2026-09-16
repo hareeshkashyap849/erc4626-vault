@@ -1,0 +1,27 @@
+{
+  "fuzzing": {
+    "timeout": 0,
+    "testLimit": 0,
+    "callSequenceLength": 100,
+    "testAllContracts": false,
+    "shrinkLimit": 5000,
+    "targetContracts": ["YieldVaultHandler", "YieldVaultInvariantTest"],
+    "senders": [
+      "0x000000000000000000000000000000000000A1",
+      "0x000000000000000000000000000000000000A2",
+      "0x000000000000000000000000000000000000A3",
+      "0x000000000000000000000000000000000000A4"
+    ]
+  },
+  "compilation": {
+    "platform": "crytic-compile",
+    "targets": ["test/YieldVault.invariants.t.sol"]
+  },
+  "testing": {
+    "testContracts": ["YieldVaultInvariantTest"],
+    "propertyTestPrefixes": ["property_"],
+    "failOnRevert": false,
+    "stopOnFailedTest": true,
+    "corpusDirectory": "medusa-corpus"
+  }
+}
