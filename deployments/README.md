@@ -4,8 +4,9 @@ This directory is the **interface between this repository and anything that
 consumes the contract** — the wallet dApp, the event indexer, or a person reading
 along with a block explorer.
 
-Nothing is deployed yet. The format below is fixed now so that P2 has a place to
-write, and so that the second repository has something specific to depend on.
+The Base Sepolia deployment is recorded in `base-sepolia.json` below. The format
+is fixed — not incidental — so that P2 has a place to write, and so that the
+second repository has something specific to depend on.
 
 ---
 
@@ -14,7 +15,14 @@ write, and so that the second repository has something specific to depend on.
 | File | Chain | Status |
 |---|---|---|
 | `local.json` | Anvil (31337) | disposable local chain; addresses change on every redeploy |
-| `base-sepolia.json` | Base Sepolia (84532) | **deployed** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, block 46,919,124, tx `0x91cf6315…`. Testnet only: no real funds, **not audited**, and the vault is not yet funded (totals are 0) |
+| `base-sepolia.json` | Base Sepolia (84532) | **deployed** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, block 46,919,124, tx `0x91cf6315…`. Testnet only: no real funds, **not audited**. The vault is funded — 21 USDC of test assets at block 46,947,044 — and those totals move; the note below this table gives the readings |
+
+**Those totals are a reading, not a constant.** Read at block 46,947,044
+(2026-09-17): `totalAssets()` returned `21000000` and `totalSupply()`
+`21000000000000000000` — 21 USDC of test assets. Two deposits put it there (20 USDC
+at block 46,919,498, then 1 USDC at block 46,945,096), and any further deposit or
+withdrawal moves both figures, so a later reader should expect a different pair
+rather than a defect.
 
 The Base Sepolia record was validated against the chain by `../scripts/check-deployment-record.mjs`, which
 checks the shape each reader needs *and* the on-chain facts: bytecode at the address, and `asset()`,
