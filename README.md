@@ -8,6 +8,14 @@ no queue, no cap, and no fee.
 **Chain:** Base Sepolia (84532) · **Access:** non-custodial, no admin power over
 user funds · **Self-written logic:** ~30 lines
 
+**Live:** <https://hareeshkashyap849.github.io/erc4626-vault/> — the dApp, served from
+GitHub Pages, reading Base Sepolia directly. No server is involved: the addresses come
+from `deployments/base-sepolia.json` at build time and the reads go to the public
+endpoint. The one panel that needs the index service (price history) has no route from a
+static host and says so rather than failing silently. Deployed contract:
+[`0x7941438e…`](https://sepolia.basescan.org/address/0x7941438ee07bea4469ccd4bec583e9fb24037f35)
+([deploy tx](https://sepolia.basescan.org/tx/0x91cf6315b578512db189f8429a0dc76f8131328e9a14e4b5dd522699b69c663d)).
+
 ```bash
 forge build
 forge test          # 46 tests: 32 unit, 9 invariants, 13 deployment checks (+12 fork, skipped offline)
