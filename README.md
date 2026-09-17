@@ -106,21 +106,23 @@ node scripts/run-all.mjs
 OK
 ```
 
-That capture is the whole suite with a local chain and the dev server up: **12 passed, 0 failed,
-1 skipped**, and the skip is the fork check. **The fork tests need `MAINNET_RPC_URL` and skip
-without it** — `MAINNET_RPC_URL=<a mainnet endpoint> node scripts/run-all.mjs` runs them (level 5 in
-`TESTING.md` does the same for forge alone). Run it offline and the four checks that need a chain or
-the dev server skip as well; that run prints **9 passed, 0 failed, 4 skipped**. Neither total says
-anything about the work that was skipped, which is the point: this README used to paste
-`10 passed, 0 failed, 0 skipped` with the fork check listed as `ok`, and that was the old runner,
-which could not tell a suite that ran from a suite that skipped itself.
+That capture is the whole suite with a local chain and the dev server up, against a **freshly started
+demo vault** — the state `scripts/dev-chain.ps1` begins in, before anything has been deposited:
+**12 passed, 0 failed, 1 skipped**, and the one skip there is the fork check. **The fork tests need
+`MAINNET_RPC_URL` and skip without it** — `MAINNET_RPC_URL=<a mainnet endpoint> node
+scripts/run-all.mjs` runs them (level 5 in `TESTING.md` does the same for forge alone). Run it
+offline and the four checks that need a chain or the dev server skip as well; that run prints
+**9 passed, 0 failed, 4 skipped**. Neither total says anything about the work that was skipped,
+which is the point: this README used to paste `10 passed, 0 failed, 0 skipped` with the fork check
+listed as `ok`, and that was the old runner, which could not tell a suite that ran from a suite that
+skipped itself.
 
-**One skip is state-dependent, and it is reported rather than passed.** `check-share-term.mjs`
-measures the virtual-share term with a 1-unit deposit into an **empty** vault, so on a demo chain
-that already holds assets it declines that measurement: it prints `SKIP:` with the totals, and the
-run reports **11 passed, 0 failed, 2 skipped** instead of calling it `ok`. `scripts/dev-chain.ps1`
-starts a chain where the measurement is available; a chain that has been used for a demo needs a
-fresh deployment, not a weaker check.
+**And one check's verdict is state-dependent, which is why it is reported rather than passed.**
+`check-share-term.mjs` measures the virtual-share term with a 1-unit deposit into an **empty** vault,
+so on a demo chain that already holds assets it declines that one measurement and prints `SKIP:` with
+the amounts it found; the run then reports **11 passed, 0 failed, 2 skipped** instead of calling that
+check `ok`. `scripts/dev-chain.ps1` starts a chain where the measurement is available; a chain that
+has been used for a demo needs a fresh deployment, not a weaker check.
 
 The individual results behind that:
 
