@@ -102,7 +102,11 @@ forge test --match-contract YieldVaultInvariantTest
                               256 runs x depth 64, 16,384 calls, 0 reverts
 forge test --match-contract YieldVaultForkTest   (needs an RPC endpoint)
                               12 passed against the REAL mainnet USDC contract
-slither .                     102 detectors, 18 contracts, 0 results
+slither . --filter-paths "lib/|test/" --exclude-dependencies
+                              102 detectors, 18 contracts, 0 results   (TESTING.md, level 6)
+slither .                     102 detectors, 18 contracts, 32 results -- all of them in
+                              vendored OpenZeppelin (31 under lib/, 1 mixed-pragma notice
+                              that also names src/)
 medusa fuzz                   9 properties, ~1M calls, 0 failures
 
 node test/wallet.test.mjs          33 passed
