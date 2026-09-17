@@ -368,6 +368,40 @@ The lesson is not "use 5 minutes". It is that **two timer parameters can each lo
 sane and be jointly broken**, and the only way to see it is to put the numbers
 side by side and convert between units.
 
+#### 7.2.1 The same mistake again, in the other direction, found by a real run
+
+The correction above fixed the *block* bound and left the *time* bound broken: the
+indexer converted `MAX_CATCHUP_SECONDS` into blocks using the **chain's** block time
+(2.000 s), so a 20-second budget meant **9 blocks** — against the 150 a cron interval
+produces. Every scheduled run would have indexed 9 blocks, reported `TRUNCATED`, and
+looked successful, while the snapshot fell behind by ~141 blocks every 5 minutes and
+by ~40,000 blocks a day.
+
+Measured, not deduced. With the workflow's own values
+(`MAX_CATCHUP_BLOCKS=300`, `MAX_CATCHUP_SECONDS=20`) against `sepolia.base.org`:
+
+```
+scanned   9 block(s)  46919860..46919868
+chain     head 46919918
+elapsed   1767ms
+TRUNCATED a bound stopped this run before the head; the next run continues
+```
+
+The head had advanced 58 blocks during the 90 seconds before that run, and 9 were
+indexed. The first correction checked one parameter against the cron interval; this
+one survived because the second parameter was compared with the chain's clock rather
+than with the indexer's own throughput.
+
+Corrected: the budget is converted at the **measured scan rate of the indexer**
+(`web3-development-execute/projects/erc4626-vault-dapp/src/indexer/bounds.ts`, with the
+conversion unit-tested), and `MAX_CATCHUP_SECONDS` is **one cron interval (300 s)** so
+it cannot become the binding constraint again. Re-measured with the same workflow
+values and a real 111-block gap: 111 blocks scanned, caught up, no truncation.
+
+The lesson this time is sharper: **a budget in seconds is only meaningful with the unit
+it is converted by.** "20 seconds" was right as wall clock and wrong as chain time, and
+nothing in either number said which one the code used.
+
 ### 7.3 What a catch-up actually costs (measured)
 
 Public Base RPC endpoints are not interchangeable:
@@ -391,6 +425,24 @@ Two conclusions:
 2. A catch-up of 300 blocks costs roughly **0.65 s** end to end (205 ms of logs
    plus 437 ms of batched timestamps), or about 12.5 s on the per-block fallback.
    `MAX_CATCHUP_SECONDS=20` therefore has ample margin on both paths.
+
+**That second conclusion does not hold for the endpoint the cron actually uses.** Every
+row in the table above is a **Base mainnet** endpoint, and section 7.2.1's parameter was
+set from the 0.65 s figure as if it transferred. It does not: the scheduled indexer runs
+against **`sepolia.base.org`**, where the same work measured **111 blocks in 23,069 ms** —
+about **4.8 blocks/s**, or ~65 s for 300 blocks, roughly 100× the 0.65 s the table
+suggests. The same endpoint gave 29 blocks in 1,958 ms for a smaller range, so the rate
+also falls as the range grows.
+
+A cost measured on one endpoint is not a budget for another. The measured Sepolia rate is
+now the default the budget is converted with (rounded down to 4 blocks/s), and the
+per-endpoint measurement belongs in this table rather than in an extrapolation:
+
+| Endpoint | Range | Measured |
+|---|---|---|
+| `sepolia.base.org` (Base Sepolia, the cron's endpoint) | 111 blocks | 23,069 ms → **4.8 blocks/s** |
+| `sepolia.base.org` (Base Sepolia) | 29 blocks | 1,958 ms → 14.8 blocks/s |
+| `base-rpc.publicnode.com` (Base mainnet) | 300 blocks | 205 ms + 437 ms → 0.65 s |
 
 ### 7.4 What the README must say once deployed
 
