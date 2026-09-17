@@ -15,7 +15,7 @@ second repository has something specific to depend on.
 | File | Chain | Status |
 |---|---|---|
 | `local.json` | Anvil (31337) | disposable local chain; addresses change on every redeploy |
-| `base-sepolia.json` | Base Sepolia (84532) | **deployed** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, block 46,919,124, tx `0x91cf6315…`. Testnet only: no real funds, **not audited**. The vault is funded — 21 USDC of test assets at block 46,947,044 — and those totals move; the note below this table gives the readings |
+| `base-sepolia.json` | Base Sepolia (84532) | **deployed** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, block 46,919,125 — the block that **contains** tx `0x91cf6315…` — and the indexer may start at or before it. Testnet only: no real funds, **not audited**. The vault is funded — 21 USDC of test assets at block 46,947,044 — and those totals move; the readings are below this table |
 
 **Those totals are a reading, not a constant.** Read at block 46,947,044
 (2026-09-17): `totalAssets()` returned `21000000` and `totalSupply()`
@@ -89,7 +89,7 @@ read this file and each one reads a different subset:
 | `chainId` | the console's `loadDeployment()` and `next.config.ts` | the build refuses; the wallet would otherwise be pointed at a chain with no vault on it |
 | `vault` | the console (as an address), the indexer (as the start of its range) | `loadDeployment()` throws, naming the file |
 | `asset` | the console, to label amounts and read decimals | amounts render against the wrong decimals |
-| `deployBlock` | the indexer's start block | **silent in both directions**: before deployment finds no events and reports success, after it misses the early ones |
+| `deployBlock` | the indexer's start block, and the block `deployTxHash` must be found in | **silent in both directions**: a start block at or before the deployment block is safe (one extra block with nothing in it), one *after* it misses the earliest events and never reports that they existed. A value that is not the block the hash was mined in makes the pair unverifiable, which is the state this record was in until 2026-09-18 |
 | `rpcUrl` / `walletRpcUrl` | the dApp's server and its wallet configuration | the page reads through a proxy; a wallet needs a URL it can reach itself, so these are two different things and are named for their use |
 | `sourceCommit` | a person, later | without it the address is *known* but not *trustworthy*: anyone can read the bytecode, but not which version of the source produced it |
 | `abi` | the sibling dApp, to decode events | see below |
@@ -100,12 +100,23 @@ anything else at it.
 
 ## Two fields carry more weight than the rest
 
-**`deployBlock`** is not decoration. The indexer's start block must be the block
-the contract was deployed in, and getting it wrong is a **silent** failure rather
-than a loud one: an indexer pointed at a block before deployment finds no events
-and reports success, and one pointed after the deployment misses every early
-event. Writing it down here, next to the address, means the indexer has a single
-authoritative source instead of a number copied out of a chat log.
+**`deployBlock`** is not decoration, and it has exactly one meaning: **the block that
+contains `deployTxHash`**. Both halves are checkable together — look the hash up in a block
+explorer, and either it is in that block or the record is wrong. The indexer's start block
+may legitimately sit at or before it: one block early scans a block with nothing in it,
+while one block late loses the vault's earliest events permanently and reports success
+while doing so, which is why the choice is asymmetric rather than "as close as possible".
+Writing the pair down here means the indexer has a single authoritative source instead of a
+number copied out of a chat log.
+
+**This record said 46,919,124 until 2026-09-18, and that number is not meaningless — it is
+the wrong contract.** `forge script` sends the deployment script's `DeployValidation`
+library as a CREATE2 **one block before** the vault, and 46,919,124 is that library's block;
+the vault's own CREATE, the transaction `deployTxHash` names, is in 46,919,125. All three
+sources say so: `eth_getTransactionReceipt(0x91cf6315…)`, `eth_getTransactionByHash(…)`, and
+`broadcast/Deploy.s.sol/84532/run-latest.json`, whose two receipts are `0x2cbedd4` (library)
+and `0x2cbedd5` (vault). A reader who meets 46,919,124 somewhere should read it as the
+library's block, not as a second opinion about the vault's.
 
 **`sourceCommit`** is what makes the address *trustworthy* rather than merely
 *known*. Anyone can read the bytecode at the address and compare it against

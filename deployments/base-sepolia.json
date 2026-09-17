@@ -7,12 +7,12 @@
   "vault": "0x7941438ee07bea4469ccd4bec583e9fb24037f35",
   "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   "owner": "0x2ae746c0ff0295c2da1ac338656f247e9758e034",
-  "deployBlock": 46919124,
+  "deployBlock": 46919125,
   "deployTxHash": "0x91cf6315b578512db189f8429a0dc76f8131328e9a14e4b5dd522699b69c663d",
   "deployer": "0x2ae746c0ff0295c2da1ac338656f247e9758e034",
   "assetSymbol": "USDC",
   "assetDecimals": 6,
-  "note": "First deployment of YieldVault to Base Sepolia, against Circle test USDC (0x036CbD53842c5426634e7929541eC2318f3dCF7e, 6 decimals). Testnet only: no real funds, not audited. The vault was deployed but is not yet funded, so totalAssets and totalSupply are 0.",
+  "note": "First deployment of YieldVault to Base Sepolia, against Circle test USDC (0x036CbD53842c5426634e7929541eC2318f3dCF7e, 6 decimals). Testnet only: no real funds, not audited. The vault is funded with 21 USDC of test assets (read at block 46,947,044), and those totals move with every deposit or withdrawal -- read them from the chain rather than from this record.",
   "sourceCommit": "5120c6f2278ca439174037c521e468b3b89bf0c7",
   "abi": [
     {

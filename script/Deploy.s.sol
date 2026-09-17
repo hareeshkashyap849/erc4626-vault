@@ -27,11 +27,22 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  * WHAT IT PRINTS AND WHY
  *
  * The console output is the raw material for `deployments/base-sepolia.json`.
- * `deployBlock` in particular is not decoration: the indexer's start block must
- * be the block the contract was deployed in, and getting it wrong fails SILENTLY
- * — a start block before deployment finds no events, and one after it misses
- * every early event. So the script prints it rather than leaving it to be looked
- * up by hand later.
+ *
+ * It does NOT print the deployment block, and that is deliberate. A broadcast script is
+ * run against a SIMULATION of the chain first, so `block.number` here is the height the
+ * simulation ran at -- shortly before the CREATE is mined, never the block it lands in.
+ * The line below is labelled `simulation block` for that reason. Take `deployBlock` from
+ * the broadcast file instead: `broadcast/Deploy.s.sol/<chainid>/run-latest.json` holds one
+ * receipt per transaction, and the one whose `transactionHash` matches the vault's CREATE
+ * carries the block the vault was deployed in. Note that this file deploys TWO contracts --
+ * the `DeployValidation` library goes out as a CREATE2 first, usually one block earlier --
+ * so "the first receipt in the file" is the library, not the vault.
+ *
+ * `deployBlock` is not decoration: the indexer's start block may be at or before the
+ * vault's block (one extra empty block), but a start block AFTER it misses every early
+ * event and fails SILENTLY, reporting success. A value that is not the block containing
+ * `deployTxHash` makes the two fields disagree, which a reader can see but no program here
+ * checked until this comment existed.
  *
  * THE ASSET IS READ, NOT ASSUMED
  *
@@ -91,11 +102,13 @@ contract Deploy is Script {
         console2.log("");
         console2.log("=== deployment record (paste into deployments/) ===");
         console2.log("address         :", address(vault));
-        console2.log("deployBlock     :", block.number);
+        console2.log("simulation block:", block.number);
         console2.log("share decimals  :", vault.decimals());
         console2.log("");
-        console2.log("The block number above is the indexer's start block.");
-        console2.log("Record it with the address, or the indexer will silently");
-        console2.log("index the wrong range.");
+        console2.log("The block above is the SIMULATION height, not the block the vault");
+        console2.log("is mined in -- nothing has been mined when this line runs. Take");
+        console2.log("deployBlock from the broadcast file's receipt for THIS address");
+        console2.log("(broadcast/Deploy.s.sol/<chainid>/run-latest.json), so that it is");
+        console2.log("the block that contains the transaction hash recorded beside it.");
     }
 }
