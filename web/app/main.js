@@ -65,10 +65,16 @@ const EXPLORER = (chainId) =>
   ({ 8453: 'https://basescan.org', 84532: 'https://sepolia.basescan.org', 1: 'https://etherscan.io' })[Number(chainId)] ?? null;
 
 async function loadConfig() {
-  const res = await fetch('/api/config', { cache: 'no-store' });
+  // RELATIVE, not '/api/config'. A leading slash resolves against the DOMAIN root, so on
+  // a project page served from a subpath (`https://<user>.github.io/<repo>/`) it would
+  // request `https://<user>.github.io/api/config` and 404 -- a blank page with a console
+  // message and nothing in the code saying why. Relative keeps the request inside
+  // whatever directory the page was served from, which is also what the dev server
+  // serves from its root.
+  const res = await fetch('api/config', { cache: 'no-store' });
   const body = await res.json();
-  if (!body.ok) throw new Error(body.error ?? '/api/config failed');
-  if (!body.vault || !body.asset) throw new Error('/api/config returned no vault or asset address');
+  if (!body.ok) throw new Error(body.error ?? 'api/config failed');
+  if (!body.vault || !body.asset) throw new Error('api/config returned no vault or asset address');
   return body;
 }
 
@@ -780,7 +786,14 @@ async function start() {
   // sends it as a single JSON-RPC array, so the page can poll at roughly the rate
   // the chain produces blocks. See web/app/rpc-batch.js for why this rather than
   // Multicall3.
-  app.publicClient = makeBatchedClient(viem, { rpcUrl: `${location.origin}/api/rpc` });
+  //
+  // The endpoint comes from the config, resolved against the page, rather than being
+  // written here as `${location.origin}/api/rpc`. In development it resolves to that
+  // same proxy (the config says `rpcUrl: '/api/rpc'`); on a static host there is no
+  // proxy, so the config carries the public endpoint instead. Hardcoding it here would
+  // mean the page could only ever run behind this project's own server.
+  const readUrl = new URL(app.config.rpcUrl, location.href).toString();
+  app.publicClient = makeBatchedClient(viem, { rpcUrl: readUrl });
 
   renderDeployment(app.config);
   renderAccount(null);
@@ -848,7 +861,12 @@ async function refreshChart() {
   if (chartInFlight) return;
   chartInFlight = true;
   try {
-    const view = await loadChart(fetch);
+    // `config.candlesUrl` is null on a static host, where there is no proxy to the index
+    // service. Passing it through rather than defaulting to a path keeps the reason for
+    // the empty panel accurate: "this page has no route to the index service" is a
+    // different statement from "the index service answered 404", and only one of them is
+    // true here.
+    const view = await loadChart(fetch, app.config.candlesUrl ?? null);
     renderChartInto(view);
   } finally {
     chartInFlight = false;

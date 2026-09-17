@@ -304,8 +304,28 @@ export function clear(node) {
  * down with it is worse than a chart that says it is unavailable. The one thing it
  * will not do is return `ready` with an empty list: "there is no history" and "here is
  * the history" are different, and so is "we could not ask".
+ *
+ * `url` is required, and `null` is a meaningful value rather than a missing one: it says
+ * this page has NO route to an index service. That is the case on a static host, where
+ * there is no server to proxy `/api/candles`, and it must not be reported as an index
+ * service that failed -- the service is fine, it is simply not reachable from here. A
+ * request is not even attempted in that case, so nothing is claimed about a service that
+ * was never asked.
+ *
+ * The path is RELATIVE when it is given (`api/candles`, not `/api/candles`): a leading
+ * slash resolves against the domain root, which breaks on any host that serves the page
+ * from a subpath.
  */
-export async function load(fetchImpl, url = '/api/candles') {
+export async function load(fetchImpl, url) {
+  if (url === null || url === undefined) {
+    return {
+      ...EMPTY_VIEW,
+      mode: 'unavailable',
+      detail:
+        'This page is served as a static file, so it has no route to the index service -- that is a separate process, and a static host runs none. ' +
+        'Everything above reads the chain directly and is unaffected; the history needs the service.',
+    };
+  }
   let res;
   try {
     res = await fetchImpl(url, { cache: 'no-store' });

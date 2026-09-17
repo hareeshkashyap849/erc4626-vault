@@ -401,8 +401,16 @@ test('clear removes every child and tolerates an empty node', () => {
 const jsonResponse = (body, status = 200) =>
   ({ ok: status >= 200 && status < 300, status, statusText: '', json: async () => body });
 
+/**
+ * @dev The url is passed explicitly in every test here, and that is the point of the
+ * API: `load` has no default endpoint, because "ask this path" and "this page has no
+ * route to an index service" are different situations that must not be confused. A
+ * default would silently turn the second into the first.
+ */
+const CANDLES = 'api/candles';
+
 test('load returns ready for a good response', async () => {
-  const view = await load(async () => jsonResponse({ candles: MOVING, count: 3, bucketSeconds: 60 }));
+  const view = await load(async () => jsonResponse({ candles: MOVING, count: 3, bucketSeconds: 60 }), CANDLES);
   assert.equal(view.mode, 'ready');
   assert.equal(view.candles.length, 3);
 });
@@ -412,39 +420,58 @@ test('load returns unavailable when the fetch itself fails, and does not throw',
   // not running. The page must survive it.
   const view = await load(async () => {
     throw new TypeError('Failed to fetch');
-  });
+  }, CANDLES);
   assert.equal(view.mode, 'unavailable');
   assert.match(view.detail, /not reachable/);
 });
 
 test('load returns unavailable for an HTTP error, naming the status', async () => {
-  const view = await load(async () => jsonResponse({}, 503));
+  const view = await load(async () => jsonResponse({}, 503), CANDLES);
   assert.equal(view.mode, 'unavailable');
   assert.match(view.detail, /503/);
 });
 
 test('load returns unavailable when the body is not JSON', async () => {
   const bad = { ok: true, status: 200, statusText: 'OK', json: async () => { throw new SyntaxError('bad json'); } };
-  const view = await load(async () => bad);
+  const view = await load(async () => bad, CANDLES);
   assert.equal(view.mode, 'unavailable');
   assert.match(view.detail, /not JSON|not reachable/);
 });
 
 test('load with an empty history is empty, not an error', async () => {
-  const view = await load(async () => jsonResponse({ candles: [], count: 0, bucketSeconds: 60 }));
+  const view = await load(async () => jsonResponse({ candles: [], count: 0, bucketSeconds: 60 }), CANDLES);
   assert.equal(view.mode, 'empty');
 });
 
-test('load asks for the same-origin proxy path by default', async () => {
+test('load asks for the path it is given, and never hard-codes a host', async () => {
   // The page must not hard-code the index service's host: the dev server proxies it so
   // the page stays same-origin, and a second hard-coded URL is a second thing to get
-  // wrong at deploy time.
+  // wrong at deploy time. The path is RELATIVE (`api/candles`, not `/api/candles`) so
+  // that a host serving the page from a subpath still resolves it inside that subpath.
   const seen = [];
   await load(async (url) => {
     seen.push(String(url));
     return jsonResponse({ candles: [], count: 0, bucketSeconds: 60 });
-  });
-  assert.deepEqual(seen, ['/api/candles']);
+  }, 'api/candles');
+  assert.deepEqual(seen, ['api/candles']);
+});
+
+/**
+ * @dev `null` is a route that does not exist, and it must not be reported as a broken
+ * service. This is the static-host case: the index service is a separate process, a
+ * static host runs none, and the page has nothing to ask. Reporting "the index service
+ * answered 404" there would send a reader to debug a service that was never contacted.
+ */
+test('a null candles url reports that there is no route, and asks nobody', async () => {
+  let asked = 0;
+  const view = await load(async () => {
+    asked++;
+    return jsonResponse({ candles: [] });
+  }, null);
+  assert.equal(asked, 0, 'no request may be made when there is no route');
+  assert.equal(view.mode, 'unavailable');
+  assert.match(view.detail, /static file/i, 'the reason must name the static host');
+  assert.doesNotMatch(view.detail, /404|refused|error \(/i, 'and must not blame a service that was never asked');
 });
 
 test('every mode survives a render, so no state leaves the panel blank', () => {

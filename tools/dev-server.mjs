@@ -31,6 +31,8 @@ const REPO = resolve(HERE, '..');
 const WEB_DIR = resolve(REPO, 'web');
 const CONFIG_FILE = join(REPO, 'deployments', 'local.json');
 
+import { deriveConfig } from './config-shape.mjs';
+
 const PORT = Number(process.env.WEB_PORT ?? 5173);
 const RPC_URL = process.env.RPC_URL ?? 'http://127.0.0.1:8545';
 /**
@@ -99,24 +101,12 @@ function readConfig() {
   }
   try {
     const record = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
-    return {
-      ok: true,
-      ...record,
-      // Derived here, not required from the record.
-      //
-      // `chainName` and `walletRpcUrl` were added to the deploy script after the
-      // first local.json was written, so a record from an older script lacks them
-      // -- and the page then cannot call `wallet_addEthereumChain` at all, which
-      // shows up as "switch network did nothing" rather than as a missing field.
-      // Defaulting them means an old record still works.
-      //
-      // The real RPC URL matters: the page reads through the same-origin
-      // `/api/rpc` proxy, but a WALLET cannot use a page-relative URL, so it needs
-      // the absolute endpoint the record was deployed against.
-      chainName: record.chainName ?? `Chain ${record.chainId}`,
-      walletRpcUrl: record.walletRpcUrl ?? record.rpcUrl,
-      rpcUrl: '/api/rpc',
-    };
+    // The shape is shared with the static build (tools/config-shape.mjs), so the page
+    // served here and the page published to a static host cannot disagree about which
+    // contract they address. The only difference is where reads go: through this
+    // server's own proxy, because it is same-origin and it is what the counters below
+    // measure.
+    return { ok: true, ...deriveConfig(record, { readRpcUrl: '/api/rpc' }) };
   } catch (err) {
     return { ok: false, error: `deployments/local.json is not valid JSON: ${err.message}` };
   }

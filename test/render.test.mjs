@@ -326,7 +326,12 @@ async function loadRender() {
     setInterval: timers.setInterval,
     clearInterval: timers.clearInterval,
     URL,
-    location: { origin: 'http://127.0.0.1:5173' },
+    // `href` as well as `origin`: the page resolves its read endpoint against the page URL
+    // (`new URL(config.rpcUrl, location.href)`) so a relative path works wherever the page
+    // is served from, including a host that serves it from a subpath. A double with only
+    // `origin` makes that line throw "Invalid URL", which reads like a page bug rather than
+    // an incomplete double. In a browser both properties always exist.
+    location: { origin: 'http://127.0.0.1:5173', href: 'http://127.0.0.1:5173/' },
   });
 
   const cache = new Map();
@@ -1096,15 +1101,27 @@ test('shortenAddress keeps short strings intact instead of mangling them', async
 async function loadMain({ ethereum = null, config = null, candles = undefined } = {}) {
   const dom = makeDom();
   const timers = makeTimers();
+  const seen = [];
   const fetchStub = async (url) => {
     const path = String(url);
-    if (path.endsWith('/api/config')) {
+    seen.push(path);
+    // Matched on the END of the path, not on `'/api/config'`: the page asks for
+    // `api/config` RELATIVE to itself, because a leading slash resolves against the
+    // domain root and breaks on any host serving the page from a subpath. A stub written
+    // against the old absolute form stops matching the moment the page is made portable
+    // -- and then the page fetches nothing and the failure looks like a config problem.
+    if (path.endsWith('api/config')) {
       const body = config ?? {
         ok: true,
         chainId: 31337,
         rpcUrl: '/api/rpc',
         walletRpcUrl: 'http://127.0.0.1:8545',
         chainName: 'Anvil Local',
+        // Present because the dev server's config has it (tools/config-shape.mjs). Omitting
+        // it here would make the page treat this run as a static host with no route to the
+        // index service, so the chart route below would stop being exercised while every
+        // test still passed.
+        candlesUrl: 'api/candles',
         vault: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0',
         asset: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
         deployBlock: 8,
@@ -1121,7 +1138,7 @@ async function loadMain({ ethereum = null, config = null, candles = undefined } 
     // exited. A stub that models fewer routes than the page uses cannot fail
     // honestly. `candles: null` means "the index service is down" and is a state the
     // page has to survive, so it stays reachable.
-    if (path.includes('/api/candles')) {
+    if (path.includes('api/candles')) {
       if (candles === null) throw new Error('the index service is not running in this test');
       const body = candles ?? {
         candles: [
@@ -1138,9 +1155,17 @@ async function loadMain({ ethereum = null, config = null, candles = undefined } 
       };
       return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
     }
-    // Every RPC read fails. start() must survive that and still wire the page:
-    // a dead chain is a normal thing for this page to have to report, not a
-    // reason for it to stop working.
+    // RPC reads go to the chain. Every one of them fails here on purpose: start() must
+    // survive a dead chain and still wire the page, because a dead chain is a normal thing
+    // for this page to have to report.
+    //
+    // A route that is NEITHER of the above is a different situation and must say so. This
+    // used to fall through to the same "no chain in this test" error, which meant a page
+    // that asked for an unrouted path looked exactly like a page whose chain was down --
+    // and the assertion that failed was never the one about the route.
+    if (!/^https?:/.test(path)) {
+      throw new Error(`the stub has no route for ${path}; add it here rather than letting it read as a chain failure`);
+    }
     throw new Error('no chain in this test');
   };
 
@@ -1162,7 +1187,12 @@ async function loadMain({ ethereum = null, config = null, candles = undefined } 
     setInterval: timers.setInterval,
     clearInterval: timers.clearInterval,
     URL,
-    location: { origin: 'http://127.0.0.1:5173' },
+    // `href` as well as `origin`: the page resolves its read endpoint against the page URL
+    // (`new URL(config.rpcUrl, location.href)`) so a relative path works wherever the page
+    // is served from, including a host that serves it from a subpath. A double with only
+    // `origin` makes that line throw "Invalid URL", which reads like a page bug rather than
+    // an incomplete double. In a browser both properties always exist.
+    location: { origin: 'http://127.0.0.1:5173', href: 'http://127.0.0.1:5173/' },
     ethereum: ethereum ?? undefined,
     // The price chart is turned off for this suite. Adding it made every assertion
     // pass and the process never exit; the cause is not the timer and not a missing

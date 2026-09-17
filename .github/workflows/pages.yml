@@ -1,0 +1,86 @@
+# Publish the dApp to GitHub Pages, built from the committed deployment record.
+#
+# WHY PAGES RATHER THAN A PLATFORM
+#
+# The page needs no server: it is plain ES modules with vendored viem, and it reads the
+# chain directly. The only two things a server supplied were the addresses and a
+# same-origin RPC proxy, and neither is required from a host:
+#
+#   * the addresses come from `deployments/base-sepolia.json` through
+#     `scripts/build-static-site.mjs`, so no address is written into a source file;
+#   * the reads go straight to `https://sepolia.base.org`, which is measured to be usable
+#     from a browser on this origin (CORS `*`, an OPTIONS preflight answered 204 with
+#     POST/content-type, and the nine-call batch the page sends answered in full).
+#
+# Pages runs no process, which is also its one limitation: the price-history panel needs
+# the index service, and there is no route to it from here. The build says so in the
+# config (`candlesUrl: null`) so the panel reports the real reason instead of blaming a
+# service it never contacted.
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one in progress: a half-published site is
+# worse than a slightly older one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # The checks that can run without a chain, a server or a browser. They are the ones
+      # that catch a moved file or a mistyped import -- the failure that would otherwise
+      # appear only as a blank page on the published site.
+      #
+      # Both need --experimental-vm-modules (they link the graph with vm.SourceTextModule),
+      # and check-vendor takes the directory to verify as an argument. Invoked without it,
+      # it resolves `undefined` and dies with ERR_INVALID_ARG_TYPE -- which reads like a
+      # broken check rather than a missing argument.
+      - name: Link the module graph without executing it
+        run: node --experimental-vm-modules web/tools/check-modules.mjs
+
+      - name: Verify the vendored viem graph
+        run: node --experimental-vm-modules web/tools/check-vendor.mjs web/vendor
+
+      # Refuses to publish if the record cannot address a contract, and re-reads what it
+      # wrote to confirm the published config agrees with the record.
+      - name: Build the static site
+        run: |
+          node scripts/build-static-site.mjs \
+            --record deployments/base-sepolia.json \
+            --rpc https://sepolia.base.org \
+            --out _site
+
+      - name: Show what will be published
+        run: find _site -type f | sort
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

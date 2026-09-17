@@ -90,12 +90,46 @@ have separated each failure class from the code that detects it.
 The server exists for three reasons and no others:
 
 1. **`file://` cannot do ES modules**, so the page needs an HTTP origin.
-2. **`/api/config`** returns the deployed addresses, so no address is written
+2. **`api/config`** returns the deployed addresses, so no address is written
    into any source file. One source of truth: `deployments/local.json`.
-3. **`/api/rpc` proxies JSON-RPC** so the page has a same-origin RPC. This avoids
-   a CORS question entirely, and makes the local-only nature explicit.
+3. **`api/rpc` proxies JSON-RPC** so the page has a same-origin RPC, which avoids
+   a CORS question entirely and makes the local-only nature explicit.
 
 It is not a backend in any other sense: no database, no auth, no state.
+
+### 2.1 The same page, published without a server
+
+None of those three reasons is a reason the page *needs a server* — only a reason the
+developer experience has one. So the page is also published to GitHub Pages by
+`.github/workflows/pages.yml`, and the differences are three lines of configuration
+rather than a second implementation:
+
+| | dev server | static host |
+|---|---|---|
+| addresses | `api/config`, read from the record per request | `api/config`, a FILE written at build time by `scripts/build-static-site.mjs` |
+| reads | same-origin `api/rpc` proxy (`rpcUrl: '/api/rpc'`) | the public endpoint directly (`rpcUrl: 'https://sepolia.base.org'`) |
+| price history | `/api/candles` forwarded to the index service | **no route** — `candlesUrl: null` |
+
+The config *shape* is shared (`tools/config-shape.mjs`) precisely so the two cannot
+drift in the fields that decide which contract is called.
+
+Two measured facts make the middle row work, and neither was assumed: `sepolia.base.org`
+answers with `Access-Control-Allow-Origin: *` and answers an OPTIONS preflight for a JSON
+POST with `204`/`POST`/`content-type`, and it accepts the nine-call JSON-RPC batch
+`readState` sends (verified in full, not sampled). Probe:
+`probe-rpc-capabilities.mjs`.
+
+The bottom row is why `candlesUrl` exists as an explicit `null` rather than a default
+path. A static page has no proxy, and the honest statement is "this page has no route to
+the index service", not "the index service answered 404" — the second sends a reader to
+debug a service that was never contacted. The panel says the first.
+
+Two URL details matter for a host that serves the page from a subpath
+(`https://<user>.github.io/<repo>/`), and both were wrong before this deploy existed:
+the config is fetched as `api/config` (relative) rather than `/api/config`, and reads go
+to `new URL(config.rpcUrl, location.href)`. A leading slash resolves against the domain
+root, which would have produced a blank page with a console message and nothing in the
+code to explain it.
 
 ## 3. Reading and writing
 
