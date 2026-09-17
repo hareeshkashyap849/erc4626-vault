@@ -79,19 +79,48 @@ argued in full in `ARCHITECTURE.md`.
 
 ## Verified behaviour
 
-One command runs every check, including the dApp's:
+One command runs every check, including the dApp's. A check whose prerequisite is missing is
+reported as `SKIP` and does not fail the run, and a forge suite that skips its own tests is
+reported as `SKIP` too rather than counted as a pass — **a skip proves nothing**, so the runner
+prints the passed and skipped totals separately instead of one green number:
 
 ```
 node scripts/run-all.mjs
-   10 passed, 0 failed, 0 skipped
-
-  ok   module graph links            ok   unit: vault (state machine, share math)
-  ok   vendored viem graph           ok   unit: render (DOM stub)
-  ok   unit: wallet                  ok   integration: deposit/redeem vs a fake chain
-  ok   contracts: forge test         ok   contracts: fork test vs real mainnet USDC
-  ok   deployed contract agrees with shareMath
+================================================
+  ok   module graph links (no build step, so this is the only static check)
+  ok   vendored viem graph
+  ok   unit: wallet (EIP-1193 client, failure classes)
+  ok   unit: vault (approval state machine, share math, parsing)
+  ok   unit: render (DOM, via a strict stub)
+  ok   unit: rpc batcher (pairing, partial failure)
+  ok   unit: chart (scale, empty series, captions)
+  ok   integration: deposit/redeem against a fake chain
+  ok   contracts: forge test (unit + fuzz + invariant)  (46 passed, 12 skipped)
+  SKIP contracts: fork test against mainnet USDC  (needs one of MAINNET_RPC_URL, FORK_RPC_URL in the environment)
+  ok   deployed contract agrees with shareMath (the 10**offset term)
   ok   dev server smoke test
+  ok   page figures agree with the chain (independently computed)
+================================================
+12 passed, 0 failed, 1 skipped
+
+OK
 ```
+
+That capture is the whole suite with a local chain and the dev server up: **12 passed, 0 failed,
+1 skipped**, and the skip is the fork check. **The fork tests need `MAINNET_RPC_URL` and skip
+without it** — `MAINNET_RPC_URL=<a mainnet endpoint> node scripts/run-all.mjs` runs them (level 5 in
+`TESTING.md` does the same for forge alone). Run it offline and the four checks that need a chain or
+the dev server skip as well; that run prints **9 passed, 0 failed, 4 skipped**. Neither total says
+anything about the work that was skipped, which is the point: this README used to paste
+`10 passed, 0 failed, 0 skipped` with the fork check listed as `ok`, and that was the old runner,
+which could not tell a suite that ran from a suite that skipped itself.
+
+**One skip is state-dependent, and it is reported rather than passed.** `check-share-term.mjs`
+measures the virtual-share term with a 1-unit deposit into an **empty** vault, so on a demo chain
+that already holds assets it declines that measurement: it prints `SKIP:` with the totals, and the
+run reports **11 passed, 0 failed, 2 skipped** instead of calling it `ok`. `scripts/dev-chain.ps1`
+starts a chain where the measurement is available; a chain that has been used for a demo needs a
+fresh deployment, not a weaker check.
 
 The individual results behind that:
 
@@ -110,9 +139,11 @@ slither .                     102 detectors, 18 contracts, 32 results -- all of 
 medusa fuzz                   9 properties, ~1M calls, 0 failures
 
 node test/wallet.test.mjs          33 passed
-node test/vault.test.mjs           47 passed
-node test/integration.test.mjs     11 passed
-node --experimental-vm-modules test/render.test.mjs   19 passed
+node test/vault.test.mjs           48 passed
+node test/integration.test.mjs     14 passed
+node test/rpc-batch.test.mjs       11 passed
+node --experimental-vm-modules test/render.test.mjs   42 passed
+node web/test/chart.test.mjs       35 passed
 ```
 
 **The invariant suite was checked for teeth, not just for green.** Reversing one
@@ -136,9 +167,10 @@ mistake is more instructive than the fix.
 
 ### What is not verified
 
-- **Not deployed anywhere.** There is no live address and no verified contract.
-  The deployment script runs and has been exercised against a local chain, but it
-  has not been run against a funded account on a public network.
+- **No Sourcify verification.** The vault *is* deployed on Base Sepolia — the address, the
+  transaction and the block are in `deployments/base-sepolia.json` — but the source has not been
+  verified anywhere: that record carries no `verifiedAt`, so "the bytecode at that address is this
+  source" is a claim a reader can recompile and check, not one this repository has published.
 - **No external audit.** Self-reviewed plus two automated tools.
 - **The dApp has been driven through real MetaMask, but not by a stranger, and not on
   a public network.** What was done, and what it proves: with a genuine MetaMask
@@ -255,18 +287,21 @@ block and the source commit are published so the indexer has somewhere to begin.
 | Phase | Content | Where | State |
 |---|---|---|---|
 | P1 | Contract, unit tests, invariants, static analysis, two fuzzers | this repo | ✅ done |
-| P2 | Deploy to Base Sepolia, verify on Sourcify, record the deployment | this repo | ⏸ **parked** — script and validation written and verified against a local chain; needs a funded key |
+| P2 | Deploy to Base Sepolia, verify on Sourcify, record the deployment | this repo | ▶ **deployed 2026-09-17** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, tx `0x91cf6315…` in block 46,919,125, funded with 21 USDC of test assets; ⏳ Sourcify verification still open |
 | P3 | Wallet dApp: connect, deposit, redeem, approve, and the five failure classes handled honestly | this repo, `web/` | ✅ code and tests done; ⏳ manual browser checklist not yet run |
 | P4 | Event indexer, SQLite snapshot, query API, scheduled refresh | `erc4626-vault-dapp` | not started |
 
-P2 is parked rather than abandoned: `script/Deploy.s.sol` performs a preflight
-against the real asset, deploys, and then verifies what it deployed, and
-`test/DeployScript.t.sol` covers that path. What is missing is a funded Base
-Sepolia account, and that is a cost this project has not paid.
+P2 was parked for as long as it took to pay for a funded key, and that was paid on 2026-09-17:
+`script/Deploy.s.sol` performed its preflight against the real asset, deployed, and then verified
+what it deployed, and the result is recorded in `deployments/`. Deploying for real also found a bug
+no local run could — a public node answers `result: "0x"` for the vault's totals *at the deployment
+block*, and the indexer's `BigInt(result)` threw on it; `deployments/README.md` records it. What
+remains open is the verification half of the deliverable: nothing has been submitted to Sourcify,
+so the record has no `verifiedAt`.
 
-Nothing is deployed on a public network, and every test that touches a token uses
-a mock (`MockERC20`) except the mainnet fork test. Both are stated in `TESTING.md`
-rather than left to be discovered.
+The vault is deployed on Base Sepolia now; every test that touches a token still uses a
+mock (`MockERC20`) except the mainnet fork test, which runs only when a mainnet RPC endpoint is
+supplied. Both are stated in `TESTING.md` rather than left to be discovered.
 
 ---
 

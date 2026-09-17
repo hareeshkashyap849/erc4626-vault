@@ -324,9 +324,10 @@ one event, two custom errors, and one constant — **28 non-comment lines** in a
 
 ## 7. Deployment plan (B + C), and why the numbers are what they are
 
-Nothing is deployed yet. This section records the plan and the measurements
-behind it, because the parameters were initially wrong in a way that is worth
-documenting.
+This section was written before the deployment, and the plan below is the one that was executed:
+the vault is live on Base Sepolia, and `deployments/base-sepolia.json` records it. What follows is
+the plan and the measurements behind its parameters, because those parameters were initially wrong
+in a way that is worth documenting.
 
 ### 7.1 The constraint
 
@@ -461,8 +462,11 @@ no claim at all.
 
 ## 8. Where this is known to be incomplete
 
-- **Nothing is deployed.** There is no live address, no verified source, and no
-  deployment script.
+- **The source is not verified.** The vault *is* deployed on Base Sepolia —
+  `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, tx `0x91cf6315…` in block 46,919,125, and a
+  `script/Deploy.s.sol` that deploys and then checks what it deployed — but nothing has been
+  submitted to Sourcify, so the link between the deployed bytecode and `src/YieldVault.sol` is
+  reproducible by a reader rather than published.
 - **No fork test against real USDC.** The suite uses a 6-decimal mock, so it
   proves the vault works with *this* token rather than with USDC. This is the
   largest gap in the evidence.

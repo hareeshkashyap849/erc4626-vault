@@ -159,9 +159,9 @@ its offset silently weakened the inflation protection.
 | D2 | Unit tests with an independent restatement of the maths | Done (32) |
 | D3 | Stateful invariant tests | Done (9 invariants, 7 handler actions) |
 | D4 | Evidence that the tests can fail | Done — the mutation check in `TESTING.md` level 2 |
-| D5 | Static analysis report | Done — slither, 0 results |
+| D5 | Static analysis report | Done — `slither . --filter-paths "lib/\|test/" --exclude-dependencies`, 0 results (`TESTING.md` level 6). A plain `slither .` reports **32**, all of them in the vendored OpenZeppelin tree under `lib/` (31 wholly there, one mixed-pragma notice that also names `src/`) |
 | D6 | A second, independent fuzzer | Done — Medusa, 9 properties, 0 failures |
-| D7 | Deployment to Base Sepolia with verified source | **Script written and exercised against a local chain; the public deployment is not done** — it needs a funded key |
+| D7 | Deployment to Base Sepolia with verified source | **Deployed 2026-09-17** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, tx `0x91cf6315…` in block 46,919,125, funded with 21 USDC of test assets. **The "verified source" half is not done**: no Sourcify entry, so the record has no `verifiedAt` |
 | D8 | A wallet dApp | **Not started. This is P3.** |
 | D9 | An event indexer, database and query API | **Not started. This is P4.** |
 | D10 | A fork test against the real USDC contract | **Done** (12 tests) — forking mainnet rather than Base Sepolia; see §5 |
@@ -175,7 +175,7 @@ its offset silently weakened the inflation protection.
 |---|---|
 | Reviewer model | An engineer reading the contract in 15 minutes, then asking "how do you know?" |
 | The answer to "how do you know" | Every number in the README is reproducible from `TESTING.md`, and every design decision in `ARCHITECTURE.md` names what it rejected |
-| The weakness a reviewer will find | Nothing is deployed to a public network. Stated up front rather than discovered. |
+| The weakness a reviewer will find | The source is not verified on Sourcify, so "this bytecode is this source" has to be checked by recompiling rather than read off a verification page — and there is no external audit. The deployment itself is live on Base Sepolia (testnet, 21 USDC of test assets). Stated up front rather than discovered. |
 
 ---
 

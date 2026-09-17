@@ -167,9 +167,10 @@ Two facts worth recording about writing those tests:
   so its revert happens at the same call depth as the cheatcode and Foundry
   reports `call didn't revert at a lower depth than cheatcode call depth`. The
   visibility here is a testability requirement, not a style choice.
-- **The script has been executed for real**, against a local `anvil` chain, and
-  it deployed a working vault. That is not the same as deploying to Base Sepolia,
-  which needs funds and a key.
+- **The script has been executed for real** — against a local `anvil` chain, and then against Base
+  Sepolia with a funded key on 2026-09-17. The public deployment is recorded in
+  `deployments/base-sepolia.json`; the local runs are what proved the checks fire before any real
+  ETH was at stake.
 
 ### Running the script locally
 
@@ -290,9 +291,12 @@ in this environment.
 
 ## What is *not* covered
 
-- **Nothing is deployed.** No Base Sepolia deployment, no Sourcify verification,
-  no live address. The script is verified against a local `anvil` chain, not
-  against a funded account on a public network.
+- **No Sourcify verification.** The vault *is* deployed on Base Sepolia — live address, transaction
+  and block in `deployments/base-sepolia.json`, funded with 21 USDC of test assets — but the source
+  is not verified anywhere: that record has no `verifiedAt`, so a reader who wants to know that the
+  deployed bytecode is this source has to recompile it. Every measurement in this file was taken on
+  a local `anvil` chain or on a mainnet fork; the Base Sepolia facts that *are* machine-checked are
+  checked by `scripts/check-deployment-record.mjs --rpc https://sepolia.base.org`.
 - **No external audit or review.** Self-review plus two automated tools.
 - **Echidna and Halmos are not part of the evidence.** Echidna cannot start in
   this environment; Halmos was not attempted.
