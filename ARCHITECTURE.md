@@ -467,9 +467,12 @@ no claim at all.
   `script/Deploy.s.sol` that deploys and then checks what it deployed — but nothing has been
   submitted to Sourcify, so the link between the deployed bytecode and `src/YieldVault.sol` is
   reproducible by a reader rather than published.
-- **No fork test against real USDC.** The suite uses a 6-decimal mock, so it
-  proves the vault works with *this* token rather than with USDC. This is the
-  largest gap in the evidence.
+- **The fork test forks mainnet, and skips without an RPC endpoint.** `test/YieldVaultFork.t.sol`
+  exists and runs **12 tests** against real mainnet USDC, so the mock-only gap this section used to
+  state is closed at one remove: what the suite still does not exercise is the vault against **Base
+  Sepolia's** USDC — the chain and the token the deployment actually uses — and those 12 tests report
+  `SKIP` unless `MAINNET_RPC_URL` or `FORK_RPC_URL` is set, so a run without an endpoint says nothing
+  about them. That pairing is the gap that remains here.
 - **No external audit or review.**
 - **Echidna and Halmos are not part of the evidence.** Echidna cannot start in
   this environment; Halmos was not attempted.

@@ -213,7 +213,7 @@ test/vault.test.mjs             48 tests: approval state machine, share math, pa
 test/integration.test.mjs       14 tests: deposit/redeem against a fake JSON-RPC chain
 test/render.test.mjs            42 tests: the DOM layer, against a strict stub
 test/rpc-batch.test.mjs         11 tests: RPC request/response pairing
-web/test/chart.test.mjs         34 tests: the price chart's scale, empty series, captions
+web/test/chart.test.mjs         35 tests: the price chart's scale, empty series, captions
 web/                            the wallet dApp — no build step; see web/DESIGN.md
   app/  index.html  style.css  vendor/  tools/  chart.js
 deployments/                    deployment records — see its README
@@ -291,7 +291,7 @@ block and the source commit are published so the indexer has somewhere to begin.
 | P1 | Contract, unit tests, invariants, static analysis, two fuzzers | this repo | ✅ done |
 | P2 | Deploy to Base Sepolia, verify on Sourcify, record the deployment | this repo | ▶ **deployed 2026-09-17** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, tx `0x91cf6315…` in block 46,919,125, funded with 21 USDC of test assets; ⏳ Sourcify verification still open |
 | P3 | Wallet dApp: connect, deposit, redeem, approve, and the five failure classes handled honestly | this repo, `web/` | ✅ code and tests done; ⏳ manual browser checklist not yet run |
-| P4 | Event indexer, SQLite snapshot, query API, scheduled refresh | `erc4626-vault-dapp` | not started |
+| P4 | Event indexer, SQLite snapshot, query API, scheduled refresh | `erc4626-vault-dapp`, surfaced by `vault-console` | ✅ built and running — the workflow commits each new snapshot (`data/vault.sqlite`; four `data:` commits by `github-actions[bot]`, all 2026-09-17, read from the GitHub API), and the console is published at <https://hareeshkashyap849.github.io/vault-console/>; ⏳ nothing is hosted as a service, so the snapshot lags the head between runs |
 
 P2 was parked for as long as it took to pay for a funded key, and that was paid on 2026-09-17:
 `script/Deploy.s.sol` performed its preflight against the real asset, deployed, and then verified

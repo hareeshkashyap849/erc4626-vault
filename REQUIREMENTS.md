@@ -162,8 +162,8 @@ its offset silently weakened the inflation protection.
 | D5 | Static analysis report | Done — `slither . --filter-paths "lib/\|test/" --exclude-dependencies`, 0 results (`TESTING.md` level 6). A plain `slither .` reports **32**, all of them in the vendored OpenZeppelin tree under `lib/` (31 wholly there, one mixed-pragma notice that also names `src/`) |
 | D6 | A second, independent fuzzer | Done — Medusa, 9 properties, 0 failures |
 | D7 | Deployment to Base Sepolia with verified source | **Deployed 2026-09-17** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, tx `0x91cf6315…` in block 46,919,125, funded with 21 USDC of test assets. **The "verified source" half is not done**: no Sourcify entry, so the record has no `verifiedAt` |
-| D8 | A wallet dApp | **Not started. This is P3.** |
-| D9 | An event indexer, database and query API | **Not started. This is P4.** |
+| D8 | A wallet dApp | **Done, in this repository's `web/`** — connect, deposit, redeem and approve, with the five failure classes handled and tested (`test/wallet.test.mjs`, 33 tests), published at <https://hareeshkashyap849.github.io/erc4626-vault/>. **The half that is still open is the manual browser checklist**, not the dApp (P3 below) |
+| D9 | An event indexer, database and query API | **Done, in `erc4626-vault-dapp` and `vault-console`** — the indexer, the committed `data/vault.sqlite` snapshot and the query API, refreshed by a scheduled workflow that commits each new snapshot (four `data:` commits authored by `github-actions[bot]`, all 2026-09-17, read from the GitHub API). **The half that is still open is that none of it is hosted**: the snapshot is a file a cron updates, and between runs it lags the chain head |
 | D10 | A fork test against the real USDC contract | **Done** (12 tests) — forking mainnet rather than Base Sepolia; see §5 |
 | D11 | Tests for the deployment script itself | **Done** (13) — added because a script only ever run by hand is untested code |
 
