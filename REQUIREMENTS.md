@@ -18,7 +18,7 @@ All measured against the chain, not copied from documentation. Checked
 |---|---|---|
 | ERC-4626 status | **Final** (Standards Track: ERC) | [eips.ethereum.org/EIPS/eip-4626](https://eips.ethereum.org/EIPS/eip-4626) |
 | ERC-4626 created | 2021-12-22 | same |
-| ERC-4626 requires | EIP-20 **and EIP-2612** | same |
+| ERC-4626 requires | EIP-20; EIP-2612 is **optional** (the header lists it under `Requires`, the body makes it a MAY) — see the correction below | `eips.ethereum.org/EIPS/eip-4626` **body**, not its header; corroborated against the deployed contract |
 | Interface size | 12 methods: `asset`, `totalAssets`, `convertToShares`, `convertToAssets`, 4 × `max*`, 4 × `preview*`, `deposit`, `mint`, `withdraw`, `redeem` | same |
 | Events | `Deposit(sender, owner)` and `Withdraw(sender, receiver, owner)`, all indexed | same |
 | Test asset | Base Sepolia USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | `eth_getCode` returns 1798 bytes, so it is a contract |
@@ -26,7 +26,38 @@ All measured against the chain, not copied from documentation. Checked
 | OpenZeppelin version | **v5.7.0** (2026-07-29) | GitHub releases API; source read at that tag |
 | forge-std version | **v1.16.2** (2026-06-30) | GitHub releases API |
 
-### 0.1 The rounding directions, read from source rather than remembered
+### 0.1 The EIP-2612 row above was wrong, and here is what is true
+
+The table above previously read `ERC-4626 requires | EIP-20 and EIP-2612`. **That was wrong**, and it
+was wrong in the direction that matters: "requires" would make a missing `permit` a conformance
+failure, when in fact `YieldVault` is a conforming ERC-4626 vault without one. The row is corrected
+rather than deleted, and the reason is recorded here.
+
+Two sources, and they disagree with each other:
+
+| Source | What it says |
+|---|---|
+| the EIP's **header metadata** | `Requires: EIP-20, EIP-2612` — which is where the wrong row came from |
+| the EIP's **body** | *"EIP-4626 tokenized Vaults **MAY** implement EIP-2612 to improve the UX of approving shares on various integrations"* — a permission, not a requirement |
+
+The body wins, and it can be checked rather than argued about: the specification the same document
+gives is **12 methods** (`asset`, `totalAssets`, `convertToShares`, `convertToAssets`, 4 × `max*`,
+4 × `preview*`, `deposit`, `mint`, `withdraw`, `redeem`), and **none of them is `permit`**. A
+`Requires` line cannot oblige a contract to implement something the standard's own interface does
+not name.
+
+**Corroboration from the deployment.** `cast selectors` over the deployed runtime bytecode at
+`0x7941438ee07bea4469ccd4bec583e9fb24037f35` returns **29 selectors** — the 12 ERC-4626 methods,
+the ERC-20 surface on shares, `own*`/ownership transfer, and `reportYield`. There is **no `permit`,
+no `nonces`, no `DOMAIN_SEPARATOR` and no `*WithAuthorization`** among them. The deployed contract
+therefore behaves as the body says it may, and no reader of this document should expect a signature
+path on this vault.
+
+**What this does not change.** `D1`–`D11` are unaffected; `F1` ("Implement ERC-4626 in full") was
+always scoped to the 12-method interface and is still met. The only thing that was ever wrong was the
+strength of the word "requires".
+
+### 0.2 The rounding directions, read from source rather than remembered
 
 An earlier note in this project claimed "OpenZeppelin's `convertToAssets` rounds
 up". **That was wrong**, and it would have produced tests asserting the opposite

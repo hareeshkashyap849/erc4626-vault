@@ -127,7 +127,7 @@ that library source does not belong inside a business contract, and a
 hand-copied `ERC4626` would silently stop receiving upstream fixes.
 
 The only consequence to be aware of is that the vault's behaviour is partly
-OpenZeppelin's behaviour, which is why `REQUIREMENTS.md` §0.1 records the
+OpenZeppelin's behaviour, which is why `REQUIREMENTS.md` §0.2 records the
 rounding directions **read from source at the pinned tag** rather than
 remembered.
 
@@ -285,7 +285,7 @@ the property is the first suspect.
 | 4 | Rounding direction implemented wrongly | Implementation error | A caller could extract value repeatedly | the vault drains | INV-1/INV-2/INV-9 plus the mutation check |
 | 5 | Inflation attack on a primed vault | Attacker donates to skew the share price | Later depositors are diluted | the later depositor's deposit | offset of `18 - assetDecimals`; INV-9; both attack tests |
 | 6 | Share price manipulated by a direct donation | Anyone transfers the asset in | Share price rises for all holders | none — it is a gift | INV-2 (donations raise `totalAssets`, which is the balance) |
-| 7 | Malicious asset reenters through an ERC-777 hook | Hooked asset | Ordering matters | potentially inconsistent state | rely on OpenZeppelin's ordering (`_transferIn` before `_mint`); noted in `REQUIREMENTS.md` §0.1 |
+| 7 | Malicious asset reenters through an ERC-777 hook | Hooked asset | Ordering matters | potentially inconsistent state | rely on OpenZeppelin's ordering (`_transferIn` before `_mint`); noted in `REQUIREMENTS.md` §0.2 |
 | 8 | Non-standard asset silently returns `false` | Old-style ERC-20 | A failed transfer would look like a success | accounting diverges from reality | `SafeERC20` reverts instead |
 | 9 | Asset rebases or charges a transfer fee | Non-standard asset | Share price moves without an event | unclear | out of scope; the tests assert exact transfer amounts, so such an asset would fail the suite |
 | 10 | Chain congestion | Base congestion | Slower and more expensive transactions | time only | none needed |
