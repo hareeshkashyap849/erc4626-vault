@@ -106,18 +106,18 @@ rather than a second implementation:
 
 | | dev server | static host |
 |---|---|---|
-| addresses | `api/config`, read from the record per request | `api/config`, a FILE written at build time by `scripts/build-static-site.mjs` |
+| addresses | `api/config`, read from the record per request | `api/config`, a FILE written at build time by `../scripts/build-static-site.mjs` |
 | reads | same-origin `api/rpc` proxy (`rpcUrl: '/api/rpc'`) | the public endpoint directly (`rpcUrl: 'https://sepolia.base.org'`) |
 | price history | `/api/candles` forwarded to the index service | **no route** — `candlesUrl: null` |
 
-The config *shape* is shared (`tools/config-shape.mjs`) precisely so the two cannot
+The config *shape* is shared (`../tools/config-shape.mjs`) precisely so the two cannot
 drift in the fields that decide which contract is called.
 
 Two measured facts make the middle row work, and neither was assumed: `sepolia.base.org`
 answers with `Access-Control-Allow-Origin: *` and answers an OPTIONS preflight for a JSON
 POST with `204`/`POST`/`content-type`, and it accepts the nine-call JSON-RPC batch
 `readState` sends (verified in full, not sampled). Probe:
-`probe-rpc-capabilities.mjs`.
+`../scripts/probe-rpc-capabilities.mjs`.
 
 The bottom row is why `candlesUrl` exists as an explicit `null` rather than a default
 path. A static page has no proxy, and the honest statement is "this page has no route to
