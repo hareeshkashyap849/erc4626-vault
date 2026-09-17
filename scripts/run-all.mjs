@@ -10,20 +10,22 @@
  * from PowerShell's handling of a stderr warning while node itself exited 0, and
  * that looked exactly like a failing test.
  *
- * Each check is a child process. Most inherit stdio. The forge test checks have
- * their output written to a file instead, because the runner has to READ what
- * forge printed: an exit code cannot tell "12 tests passed against real USDC" from
- * "12 tests declined to run" (see `forgeTotals` below). Piped stdio is not used
- * because this sandbox forbids named pipes, so capturing a child's output through
- * a pipe fails with EPERM; an inherited file descriptor is a regular file and
- * works. The captured output is printed as soon as the check returns, so nothing
- * that used to be visible on the console is hidden by this.
+ * Each check is a child process whose output is written to a file and replayed to
+ * the console, because the runner has to READ what the check said: an exit code
+ * cannot tell "12 tests passed against real USDC" from "12 tests declined to run"
+ * (see `forgeTotals`), nor "the term was measured" from "the measurement was
+ * skipped" (see `skipVerdicts`). Piped stdio is not used because this sandbox
+ * forbids named pipes, so capturing a child's output through a pipe fails with
+ * EPERM; an inherited file descriptor is a regular file and works. The captured
+ * output is printed as soon as the check returns, so nothing that used to be
+ * visible on the console is hidden by this.
  *
  * A check whose PREREQUISITE is missing reports SKIP and does not fail the run --
  * the offline path is a supported way to work on this project. A check that runs
- * and fails, fails the run. A check that RUNS BUT SKIPS its tests is also reported
- * as SKIP rather than as a pass: it exercised nothing, and a skip presented as
- * evidence is the failure mode this file exists to prevent.
+ * and fails, fails the run. A check that RUNS BUT SKIPS its tests is reported as
+ * SKIP rather than as a pass, and so is a script check that prints a `SKIP:` line
+ * about the measurement it exists for: it exercised nothing, and a skip presented
+ * as evidence is the failure mode this file exists to prevent.
  *
  * Run: node scripts/run-all.mjs [--offline]
  */
@@ -124,6 +126,37 @@ function replay(files) {
   }
 }
 
+/**
+ * The `SKIP:` verdicts a script check printed, if any.
+ *
+ * WHY A LINE IN THE OUTPUT RATHER THAN AN EXIT CODE
+ *
+ * A check can run, do part of its work, and decline the ONE measurement it exists for -- and it
+ * still exits 0, because nothing failed. `scripts/check-share-term.mjs` is the case that made this
+ * necessary: the term `shareMath` assumes is read off the chain by a 1-unit deposit into an EMPTY
+ * vault, and against a vault that already holds assets that deposit measures nothing. The script
+ * printed `SKIPPED the deposit measurement` and exited 0, so the runner reported `ok` over a check
+ * that had not taken its strongest measurement -- the same failure the fork suite had, one layer
+ * down: the exit code cannot tell "measured" from "declined to measure".
+ *
+ * The marker is not new. `check-share-term.mjs`, `check-page-vs-chain.mjs` and
+ * `web/tools/smoke-server.mjs` already print `SKIP: <reason>` when they decline to run at all, and
+ * until now those lines were only for a human reading the console -- the runner counted every exit
+ * 0 as a pass. Reading the marker the checks already write is smaller than inventing a second
+ * protocol, and it needs no cooperation from forge.
+ *
+ * Anchored at the start of a line, and the reason is kept: a skip whose reason is dropped is a
+ * skip nobody can act on.
+ */
+function skipVerdicts(text) {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('SKIP:'))
+    .map((line) => line.slice('SKIP:'.length).trim())
+    .filter((reason) => reason.length > 0);
+}
+
 const CHECKS = [
   // --- fast, no prerequisites
   // `node: true` means the entry is a script path, not an executable. On Windows a
@@ -221,6 +254,8 @@ for (const [index, check] of CHECKS.entries()) {
   let cmd;
   let args;
   let captured = null;
+  // Only `forge test` prints pass/fail/skip counts, so only it is judged by them.
+  const isForgeTest = check.forgeArgs?.[0] === 'test';
   if (check.forgeArgs) {
     if (!existsSync(forge)) {
       skipped += 1;
@@ -230,8 +265,7 @@ for (const [index, check] of CHECKS.entries()) {
     }
     cmd = forge;
     args = check.forgeArgs;
-    // Only `forge test` prints pass/fail/skip counts, so only it needs reading.
-    if (check.forgeArgs[0] === 'test') captured = captureLogs(index);
+    if (isForgeTest) captured = captureLogs(index);
   } else {
     // `process.execPath`, not the string "node": this process was launched from a
     // bundled runtime whose directory is on PATH only because the harness put it
@@ -239,6 +273,10 @@ for (const [index, check] of CHECKS.entries()) {
     // "'node' is not recognized", which reads as a broken check.
     cmd = process.execPath;
     args = [...(check.flags ?? []), resolve(REPO, check.file), ...(check.args ?? [])];
+    // A script check's output is captured for the same reason forge's is: the runner has to READ
+    // what the check said, because a check that declined its own measurement still exits 0. The
+    // captured text is replayed immediately below, so nothing is hidden by this.
+    captured = captureLogs(index);
   }
 
   // PREPEND to PATH, never replace it. An earlier version assigned
@@ -264,7 +302,7 @@ for (const [index, check] of CHECKS.entries()) {
   }
 
   // A forge check is judged by the counts forge printed, never by the exit code alone.
-  const totals = captured ? forgeTotals(captured.read()) : null;
+  const totals = isForgeTest ? forgeTotals(captured.read()) : null;
 
   if (run.status !== 0 || (totals && totals.failed > 0)) {
     failed += 1;
@@ -273,7 +311,7 @@ for (const [index, check] of CHECKS.entries()) {
     continue;
   }
 
-  if (captured && !totals) {
+  if (isForgeTest && !totals) {
     // Exit 0 with no summary at all: forge ran nothing (a filter matching no file
     // exits 0 and prints no counts) or its output no longer looks like this. Both
     // mean there is no evidence, so neither may be reported as a pass.
@@ -288,6 +326,17 @@ for (const [index, check] of CHECKS.entries()) {
     skipped += 1;
     results.push(['SKIP', check.name, `${detail} -- skipped, not passed`]);
     console.log(`    SKIP: ${detail}; a skipped test proves nothing, so this is not a pass`);
+    continue;
+  }
+
+  // A script check that declined its own measurement says so on its output (see `skipVerdicts`).
+  // It ran, so this is not a failure -- but it is not a pass either, and the reason it gives is
+  // carried into the summary because a skip nobody can act on is only slightly better than a lie.
+  const declines = captured ? skipVerdicts(captured.read()) : [];
+  if (declines.length > 0) {
+    skipped += 1;
+    results.push(['SKIP', check.name, `${declines.join('; ')} -- the check ran but skipped what it exists to measure`]);
+    console.log(`    SKIP: ${declines.join('; ')}`);
     continue;
   }
 

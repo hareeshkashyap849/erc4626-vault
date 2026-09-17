@@ -20,6 +20,20 @@
  * Run: node scripts/check-share-term.mjs
  * Needs anvil up and a deployed vault. Skips cleanly if either is missing, so it
  * is safe to call from a suite that may run offline.
+ *
+ * THE THREE WAYS IT CAN DECLINE, AND WHY EACH ONE PRINTS `SKIP:`
+ *
+ *   no deployments/local.json   nothing is deployed to check
+ *   no chain at RPC_URL         the record cannot be compared with anything
+ *   the vault is not empty      the DEPOSIT measurement cannot be taken (see below)
+ *
+ * The first two mean the script did nothing; the third means it ran its weaker checks and
+ * skipped the one it exists for. All three print a line beginning with `SKIP:` and exit 0, and
+ * `scripts/run-all.mjs` reads that marker and reports the check as SKIP rather than as a pass.
+ * That matters most for the third case: a check that verified "the record matches the chain"
+ * and then declined to measure the term is not evidence that the term is right, and until the
+ * marker was read it was reported as `ok` -- a skip presented as a pass, which is the exact
+ * failure the runner was rewritten to stop making.
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -106,6 +120,14 @@ async function send(tx) {
 }
 
 let failed = false;
+/**
+ * Whether the deposit measurement -- the reason this file exists -- actually ran.
+ *
+ * Kept separate from `failed` because "the measurement was taken and agreed" and "the
+ * measurement could not be taken" are different sentences, and the closing line must not
+ * print the first when it means the second.
+ */
+let measured = false;
 const check = (label, actual, expected) => {
   const ok = actual === expected;
   if (!ok) failed = true;
@@ -212,6 +234,7 @@ if (totalSupply === 0n && totalAssets === 0n) {
       failed = true;
     } else {
       const minted = word(await call(vault, 'balanceOf(address)', [sender]));
+      measured = true;
       console.log(`  measured: a 1-unit deposit into an empty vault minted ${minted} shares`);
       check('measured term equals 10**offset', minted, expectedTerm);
       const WRONG = 10n ** BigInt(shareDecimals);
@@ -220,7 +243,12 @@ if (totalSupply === 0n && totalAssets === 0n) {
     await cleanup();
   }
 } else {
-  console.log(`  SKIPPED the deposit measurement: the vault is not empty (totalSupply ${totalSupply}, totalAssets ${totalAssets})`);
+  // The vault holds assets, so a 1-unit deposit mints `assets * (totalSupply + T) / (totalAssets + 1)`
+  // and NOT `T` -- the measurement is unavailable, not failed. Declared as a skip with a reason, in
+  // the `SKIP:` form this repository's checks already use, so the runner reports it instead of
+  // counting exit 0 as a pass. The checks above (record vs chain, 18 decimals) still ran; the
+  // sentence below the summary says which of the two kinds of run this was.
+  console.log(`SKIP: the vault is not empty, so the 1-unit deposit cannot measure the term (totalSupply ${totalSupply}, totalAssets ${totalAssets})`);
   console.log('  to measure it, redeploy on a fresh chain: scripts/dev-chain.ps1');
 }
 
@@ -229,4 +257,8 @@ if (failed) {
   console.log('FAILED');
   process.exit(1);
 }
-console.log('OK -- the deployed contract agrees with the offset shareMath assumes');
+if (measured) {
+  console.log('OK -- the deployed contract agrees with the offset shareMath assumes');
+} else {
+  console.log('the checks that ran agree, but the term itself was NOT measured on this run (see the SKIP above)');
+}
