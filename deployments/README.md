@@ -13,7 +13,28 @@ write, and so that the second repository has something specific to depend on.
 
 | File | Chain | Status |
 |---|---|---|
-| `base-sepolia.json` | Base Sepolia (84532) | **not yet deployed** |
+| `local.json` | Anvil (31337) | disposable local chain; addresses change on every redeploy |
+| `base-sepolia.json` | Base Sepolia (84532) | **deployed** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, block 46,919,124, tx `0x91cf6315…`. Testnet only: no real funds, **not audited**, and the vault is not yet funded (totals are 0) |
+
+The Base Sepolia record was validated against the chain by `../scripts/check-deployment-record.mjs`, which
+checks the shape each reader needs *and* the on-chain facts: bytecode at the address, and `asset()`,
+`owner()`, `decimals()` and `symbol()` matching what the record claims:
+
+```
+PASS  the endpoint is on the record's chain (record says 84532)  (endpoint says 84532)
+PASS  there is bytecode at the vault address  (5070 bytes)
+PASS  the vault's asset() equals the recorded asset  (0x036CbD53842c5426634e7929541eC2318f3dCF7e)
+PASS  the vault's owner() equals the recorded owner  (0x2aE746C0ff0295c2da1aC338656F247e9758E034)
+PASS  the asset reports the recorded decimals  (6 on chain, record says 6)
+PASS  the asset reports the recorded symbol  (USDC on chain, record says USDC)
+```
+
+**Deploying for real found a bug that no local run could.** The indexer read the vault's totals with
+batched `eth_call`s and converted them with `BigInt(result)` after checking only that the reply *had* a
+`result` field. A public node asked for those totals **at the deployment block** answers `result: "0x"` —
+the contract is not in the state it serves for that height — and `BigInt('0x')` throws. Anvil never
+answers that way, so every local run passed; the failure appears on the first block of the first real
+deployment, and it is total. Fixed in `../erc4626-vault-dapp` (`decodeUintResult`, with tests).
 
 ## The record format
 
