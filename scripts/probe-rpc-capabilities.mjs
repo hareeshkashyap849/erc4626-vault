@@ -15,7 +15,7 @@
 import { request as httpsRequest } from 'node:https';
 
 const url = process.argv[2] ?? 'https://sepolia.base.org';
-const origin = process.argv[3] ?? 'https://hareeshkashyap849.github.io';
+const origin = process.argv[3] ?? 'https://wuzilin-web3.github.io';
 
 function post(body, extraHeaders = {}) {
   return send('POST', body === null ? null : JSON.stringify(body), extraHeaders);

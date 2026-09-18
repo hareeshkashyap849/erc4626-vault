@@ -8,7 +8,7 @@ no queue, no cap, and no fee.
 **Chain:** Base Sepolia (84532) · **Access:** non-custodial, no admin power over
 user funds · **Self-written logic:** ~30 lines
 
-**Live:** <https://hareeshkashyap849.github.io/erc4626-vault/> — the dApp, served from
+**Live:** <https://wuzilin-web3.github.io/erc4626-vault/> — the dApp, served from
 GitHub Pages, reading Base Sepolia directly. No server is involved: the addresses come
 from `deployments/base-sepolia.json` at build time and the reads go to the public
 endpoint. The one panel that needs the index service (price history) has no route from a
@@ -291,7 +291,7 @@ block and the source commit are published so the indexer has somewhere to begin.
 | P1 | Contract, unit tests, invariants, static analysis, two fuzzers | this repo | ✅ done |
 | P2 | Deploy to Base Sepolia, verify on Sourcify, record the deployment | this repo | ▶ **deployed 2026-09-17** — vault `0x7941438ee07bea4469ccd4bec583e9fb24037f35`, tx `0x91cf6315…` in block 46,919,125, funded with 21 USDC of test assets; ⏳ Sourcify verification still open |
 | P3 | Wallet dApp: connect, deposit, redeem, approve, and the five failure classes handled honestly | this repo, `web/` | ✅ code and tests done; ⏳ manual browser checklist not yet run |
-| P4 | Event indexer, SQLite snapshot, query API, scheduled refresh | `erc4626-vault-dapp`, surfaced by `vault-console` | ✅ built and running — the workflow commits each new snapshot (`data/vault.sqlite`; four `data:` commits by `github-actions[bot]`, all 2026-09-17, read from the GitHub API), and the console is published at <https://hareeshkashyap849.github.io/vault-console/>; ⏳ nothing is hosted as a service, so the snapshot lags the head between runs |
+| P4 | Event indexer, SQLite snapshot, query API, scheduled refresh | `erc4626-vault-dapp`, surfaced by `vault-console` | ✅ built and running — the workflow commits each new snapshot (`data/vault.sqlite`; four `data:` commits by `github-actions[bot]`, all 2026-09-17, read from the GitHub API), and the console is published at <https://wuzilin-web3.github.io/vault-console/>; ⏳ nothing is hosted as a service, so the snapshot lags the head between runs |
 
 P2 was parked for as long as it took to pay for a funded key, and that was paid on 2026-09-17:
 `script/Deploy.s.sol` performed its preflight against the real asset, deployed, and then verified
